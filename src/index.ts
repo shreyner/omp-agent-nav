@@ -1,14 +1,16 @@
-import { createRuntime } from "./runtime";
-import { installHostBridge, NAVIGATION_TOOLS } from "./host";
-import type { WorkspaceBridge } from "./host";
+import { installHostBridge, NAVIGATION_TOOLS, type WorkspaceBridge } from "./host";
 import { installMemoryBridge } from "./memory";
+import { createRuntime } from "./runtime";
 import { installTaskTool } from "./task";
-import type { ExtensionApiLike, WorkspaceRequest } from "./types";
+import { type ExtensionApiLike, type WorkspaceRequest } from "./types";
 
 interface SchemaBuilder {
   String(options?: { description?: string; minLength?: number }): unknown;
   Optional(schema: unknown): unknown;
-  Object(properties: Record<string, unknown>, options?: { additionalProperties?: boolean }): unknown;
+  Object(
+    properties: Record<string, unknown>,
+    options?: { additionalProperties?: boolean },
+  ): unknown;
   Array(items: unknown, options?: { minItems?: number }): unknown;
 }
 
@@ -20,21 +22,66 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
   await installTaskTool(pi, runtime, bridge, memory);
   const { Type } = await runtime.importModule<{ Type: SchemaBuilder }>("@oh-my-pi/omptype/typebox");
   const path = (description: string) => Type.String({ description, minLength: 1 });
-  const tools: Array<{ name: string; description: string; properties: Record<string, unknown>; request(params: Record<string, unknown>): WorkspaceRequest }> = [
-    { name: "worktree_create", description: "Queue a clean worktree from ref or HEAD, preserving source changes. Optional path is exact and primary-relative. Run alone; this does not enter the worktree.", properties: { branch: path("New branch name."), path: Type.Optional(path("Exact destination path; relative paths start at primary checkout.")), ref: Type.Optional(path("Starting Git ref; defaults to current HEAD.")) }, request: params => ({ action: "create", branch: params.branch as string, path: params.path as string | undefined, ref: params.ref as string | undefined }) },
-    { name: "worktree_enter", description: "Queue entering a registered worktree of an allowed project. Run alone.", properties: { path: path("Registered worktree directory.") }, request: params => ({ action: "enter", path: params.path as string }) },
-    { name: "worktree_exit", description: "Queue returning to the primary checkout while retaining the worktree. Run alone.", properties: {}, request: () => ({ action: "exit" }) },
-    { name: "worktree_remove", description: "Queue removal of an inactive clean registered worktree while retaining its branch. Run alone; force removal is unavailable.", properties: { path: path("Worktree to remove.") }, request: params => ({ action: "remove", path: params.path as string }) },
+  const tools: Array<{
+    name: string;
+    description: string;
+    properties: Record<string, unknown>;
+    request(params: Record<string, unknown>): WorkspaceRequest;
+  }> = [
+    {
+      name: "worktree_create",
+      description:
+        "Queue a clean worktree from ref or HEAD, preserving source changes. Optional path is exact and primary-relative. Run alone; this does not enter the worktree.",
+      properties: {
+        branch: path("New branch name."),
+        path: Type.Optional(
+          path("Exact destination path; relative paths start at primary checkout."),
+        ),
+        ref: Type.Optional(path("Starting Git ref; defaults to current HEAD.")),
+      },
+      request: (params) => ({
+        action: "create",
+        branch: params.branch as string,
+        path: params.path as string | undefined,
+        ref: params.ref as string | undefined,
+      }),
+    },
+    {
+      name: "worktree_enter",
+      description: "Queue entering a registered worktree of an allowed project. Run alone.",
+      properties: { path: path("Registered worktree directory.") },
+      request: (params) => ({ action: "enter", path: params.path as string }),
+    },
+    {
+      name: "worktree_exit",
+      description:
+        "Queue returning to the primary checkout while retaining the worktree. Run alone.",
+      properties: {},
+      request: () => ({ action: "exit" }),
+    },
+    {
+      name: "worktree_remove",
+      description:
+        "Queue removal of an inactive clean registered worktree while retaining its branch. Run alone; force removal is unavailable.",
+      properties: { path: path("Worktree to remove.") },
+      request: (params) => ({ action: "remove", path: params.path as string }),
+    },
   ];
   for (const tool of tools) {
     pi.registerTool({
-      name: tool.name, label: tool.name, description: tool.description,
-      parameters: Type.Object(tool.properties, { additionalProperties: false }), approval: "write", loadMode: "essential",
+      name: tool.name,
+      label: tool.name,
+      description: tool.description,
+      parameters: Type.Object(tool.properties, { additionalProperties: false }),
+      approval: "write",
+      loadMode: "essential",
       execute: async (id, params, signal, _update, ctx) => {
-        if (ctx.agent.kind !== "main") throw new Error("Workspace navigation is available only to the main session.");
+        if (ctx.agent.kind !== "main")
+          throw new Error("Workspace navigation is available only to the main session.");
         signal?.throwIfAborted();
         bridge.coordinator(ctx).assertDirectToolCall(id);
-        if (!ctx.requestWorkspaceChange) throw new Error("The omp-nav context bridge is unavailable.");
+        if (!ctx.requestWorkspaceChange)
+          throw new Error("The omp-nav context bridge is unavailable.");
         const result = await ctx.requestWorkspaceChange(tool.request(params));
         return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
       },
@@ -42,8 +89,13 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
   }
   registerSessionMoveTool(pi, bridge, Type);
   pi.registerTool({
-    name: "worktree_list", label: "worktree_list", description: "List registered worktrees and their safety state for the current allowed project.",
-    parameters: Type.Object({}, { additionalProperties: false }), approval: "read", loadMode: "essential",
+    name: "worktree_list",
+    label: "worktree_list",
+    description:
+      "List registered worktrees and their safety state for the current allowed project.",
+    parameters: Type.Object({}, { additionalProperties: false }),
+    approval: "read",
+    loadMode: "essential",
     execute: async (_id, _params, _signal, _update, ctx) => {
       if (!ctx.listWorktrees) throw new Error("The omp-nav context bridge is unavailable.");
       const result = await ctx.listWorktrees();
@@ -51,19 +103,34 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
     },
   });
   pi.registerTool({
-    name: "workspace_grant", label: "workspace_grant",
-    description: "Accept existing project directories into the workspace roots for session_move and task.cwd after explicit user approval. A worktree path resolves to its primary checkout. Pass all needed dirs in one call for a single approval.",
-    parameters: Type.Object({ dirs: Type.Array(path("Existing directory to accept; a worktree resolves to its primary checkout."), { minItems: 1 }) }, { additionalProperties: false }),
-    approval: { tier: "write", policy: "prompt", reason: "Expands workspace roots that session_move and task.cwd may target" },
-    formatApprovalDetails: args => {
+    name: "workspace_grant",
+    label: "workspace_grant",
+    description:
+      "Accept existing project directories into the workspace roots for session_move and task.cwd after explicit user approval. A worktree path resolves to its primary checkout. Pass all needed dirs in one call for a single approval.",
+    parameters: Type.Object(
+      {
+        dirs: Type.Array(
+          path("Existing directory to accept; a worktree resolves to its primary checkout."),
+          { minItems: 1 },
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    approval: {
+      tier: "write",
+      policy: "prompt",
+      reason: "Expands workspace roots that session_move and task.cwd may target",
+    },
+    formatApprovalDetails: (args) => {
       if (args && typeof args === "object" && "dirs" in args && Array.isArray(args.dirs)) {
-        return args.dirs.map(dir => `dir: ${String(dir)}`);
+        return args.dirs.map((dir) => `dir: ${String(dir)}`);
       }
       return undefined;
     },
     loadMode: "essential",
     execute: async (id, params, signal, _update, ctx) => {
-      if (ctx.agent.kind !== "main") throw new Error("Workspace grants are available only to the main session.");
+      if (ctx.agent.kind !== "main")
+        throw new Error("Workspace grants are available only to the main session.");
       signal?.throwIfAborted();
       bridge.coordinator(ctx).assertDirectToolCall(id);
       const result = await bridge.grantWorkspaceDirs(ctx, params.dirs as string[]);
@@ -77,12 +144,20 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
       await bridge.prepareProjectPrompt(bridge.currentSession(ctx));
       await memory.ensure(bridge.currentSession(ctx));
     } else {
-      const api = pi as ExtensionApiLike & { getActiveTools(): string[]; setActiveTools(names: string[]): Promise<void> };
-      await api.setActiveTools(api.getActiveTools().filter(name => !NAVIGATION_TOOLS.has(name) && name !== "worktree_list"));
+      const api = pi as ExtensionApiLike & {
+        getActiveTools(): string[];
+        setActiveTools(names: string[]): Promise<void>;
+      };
+      await api.setActiveTools(
+        api
+          .getActiveTools()
+          .filter((name) => !NAVIGATION_TOOLS.has(name) && name !== "worktree_list"),
+      );
     }
   });
   pi.on("session_before_switch", async (_event, ctx) => {
-    if (ctx.agent.kind === "main") await bridge.coordinator(ctx).cancel("The session is switching.");
+    if (ctx.agent.kind === "main")
+      await bridge.coordinator(ctx).cancel("The session is switching.");
   });
   pi.on("session_switch", async (_event, ctx) => {
     if (ctx.agent.kind === "main") {
@@ -107,21 +182,38 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
   });
 }
 
-export function registerSessionMoveTool(pi: ExtensionApiLike, bridge: WorkspaceBridge, type: SchemaBuilder): void {
+export function registerSessionMoveTool(
+  pi: ExtensionApiLike,
+  bridge: WorkspaceBridge,
+  type: SchemaBuilder,
+): void {
   pi.registerTool({
-    name: "session_move", label: "session_move", description: "Queue moving this session into an allowed project directory; run alone. Context and memory change before the next model request.",
-    parameters: type.Object({ dir: type.String({ description: "Existing destination directory, relative to current cwd or absolute.", minLength: 1 }) }, { additionalProperties: false }),
-    approval: args => bridge.sessionMoveApproval(args),
-    formatApprovalDetails: args => {
+    name: "session_move",
+    label: "session_move",
+    description:
+      "Queue moving this session into an allowed project directory; run alone. Context and memory change before the next model request.",
+    parameters: type.Object(
+      {
+        dir: type.String({
+          description: "Existing destination directory, relative to current cwd or absolute.",
+          minLength: 1,
+        }),
+      },
+      { additionalProperties: false },
+    ),
+    approval: (args) => bridge.sessionMoveApproval(args),
+    formatApprovalDetails: (args) => {
       const dir = (args as { dir?: unknown } | null | undefined)?.dir;
       return typeof dir === "string" ? [`dir: ${dir}`] : undefined;
     },
     loadMode: "essential",
     execute: async (id, params, signal, _update, ctx) => {
-      if (ctx.agent.kind !== "main") throw new Error("Workspace navigation is available only to the main session.");
+      if (ctx.agent.kind !== "main")
+        throw new Error("Workspace navigation is available only to the main session.");
       signal?.throwIfAborted();
       bridge.coordinator(ctx).assertDirectToolCall(id);
-      if (!ctx.requestWorkspaceChange) throw new Error("The omp-nav context bridge is unavailable.");
+      if (!ctx.requestWorkspaceChange)
+        throw new Error("The omp-nav context bridge is unavailable.");
       const dir = params.dir as string;
       if (bridge.moveNeedsGrant(dir)) await bridge.grantWorkspaceDirs(ctx, [dir]);
       const result = await ctx.requestWorkspaceChange({ action: "move", dir });

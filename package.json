@@ -4,11 +4,33 @@
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
-  "omp": { "extensions": ["./src/index.ts"] },
+  "omp": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
   "scripts": {
     "test": "bun test ./test",
-    "check": "bun build ./src/index.ts --target=bun --packages=external --outdir=/private/tmp/omp-agent-nav-build"
+    "check": "bun build ./src/index.ts --target=bun --packages=external --outdir=/private/tmp/omp-agent-nav-build && biome check --error-on-warnings .",
+    "lint": "biome lint --error-on-warnings .",
+    "lint:fix": "biome check --write .",
+    "fix:unsafe": "biome check --write --unsafe .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "matrix": "bun bin/matrix.ts"
   },
-  "peerDependencies": { "@oh-my-pi/pi-coding-agent": "18.11.0 || 18.11.1" },
-  "engines": { "bun": ">=1.3.14" }
+  "peerDependencies": {
+    "@oh-my-pi/pi-coding-agent": "18.11.0 || 18.11.1"
+  },
+  "peerDependenciesMeta": {
+    "@oh-my-pi/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "bun": ">=1.3.14"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15"
+  }
 }

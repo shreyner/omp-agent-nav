@@ -2,16 +2,26 @@ import { afterEach, expect, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { assertInstalledOmp, createRuntime, findInstalledOmp, SUPPORTED_OMP_VERSIONS } from "../src/runtime";
-import type { HostNamespace } from "../src/types";
+
+import {
+  assertInstalledOmp,
+  createRuntime,
+  findInstalledOmp,
+  SUPPORTED_OMP_VERSIONS,
+} from "../src/runtime";
+import { type HostNamespace } from "../src/types";
 
 const temporary: string[] = [];
-afterEach(async () => { while (temporary.length) await fs.rm(temporary.pop()!, { force: true, recursive: true }); });
+afterEach(async () => {
+  while (temporary.length) await fs.rm(temporary.pop()!, { force: true, recursive: true });
+});
 
 test("discovers the installed npm package and imports its native/source modules without copies", async () => {
   const root = findInstalledOmp();
   const runtime = createRuntime({} as HostNamespace, root);
-  const registry = await runtime.importModule<{ AgentRegistry: { global(): unknown } }>("registry/agent-registry.ts");
+  const registry = await runtime.importModule<{ AgentRegistry: { global(): unknown } }>(
+    "registry/agent-registry.ts",
+  );
   const vcs = await runtime.importModule<{ git: unknown }>("@oh-my-pi/pi-natives/vcs");
   expect(typeof registry.AgentRegistry.global).toBe("function");
   expect(typeof vcs.git).toBe("function");
@@ -21,17 +31,29 @@ test("discovers the installed npm package and imports its native/source modules 
 test("rejects versions outside the matrix and accepts every supported manifest without source CLI", async () => {
   const directory = await fs.mkdtemp(join(tmpdir(), "omp-nav-runtime-"));
   temporary.push(directory);
-  await fs.writeFile(join(directory, "package.json"), JSON.stringify({ name: "@oh-my-pi/pi-coding-agent", version: "19.0.0" }));
-  expect(() => assertInstalledOmp(directory)).toThrow(`omp-agent-nav supports @oh-my-pi/pi-coding-agent ${SUPPORTED_OMP_VERSIONS.join(", ")}; found @oh-my-pi/pi-coding-agent 19.0.0.`);
+  await fs.writeFile(
+    join(directory, "package.json"),
+    JSON.stringify({ name: "@oh-my-pi/pi-coding-agent", version: "19.0.0" }),
+  );
+  expect(() => assertInstalledOmp(directory)).toThrow(
+    `omp-agent-nav supports @oh-my-pi/pi-coding-agent ${SUPPORTED_OMP_VERSIONS.join(", ")}; found @oh-my-pi/pi-coding-agent 19.0.0.`,
+  );
   for (const version of SUPPORTED_OMP_VERSIONS) {
-    await fs.writeFile(join(directory, "package.json"), JSON.stringify({ name: "@oh-my-pi/pi-coding-agent", version }));
+    await fs.writeFile(
+      join(directory, "package.json"),
+      JSON.stringify({ name: "@oh-my-pi/pi-coding-agent", version }),
+    );
     expect(() => assertInstalledOmp(directory)).not.toThrow();
   }
 });
 
 test("ordinary installed CLI passes its version smoke check", async () => {
   const child = Bun.spawn([Bun.which("omp")!, "--version"], { stdout: "pipe", stderr: "pipe" });
-  const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  const [code, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
   if (code) throw new Error(`Configured extension fixture failed: ${stderr}`);
   expect(code).toBe(0);
   expect(SUPPORTED_OMP_VERSIONS.some((version) => stdout.trim().endsWith(version))).toBe(true);
@@ -44,23 +66,40 @@ test("ordinary CLI loads the configured extension and relocates native headless 
   const cwd = join(directory, "project");
   const destination = join(directory, "destination");
   const agentDir = join(directory, "agent");
-  await fs.mkdir(cwd); await fs.mkdir(destination); await fs.mkdir(agentDir);
+  await fs.mkdir(cwd);
+  await fs.mkdir(destination);
+  await fs.mkdir(agentDir);
   await fs.writeFile(join(cwd, "AGENTS.md"), "Source PROJECT_A_UNIQUE instructions.");
   await fs.writeFile(join(destination, "AGENTS.md"), "Destination PROJECT_B_UNIQUE instructions.");
-  await fs.mkdir(join(cwd, ".omp")); await fs.mkdir(join(destination, ".omp"));
+  await fs.mkdir(join(cwd, ".omp"));
+  await fs.mkdir(join(destination, ".omp"));
   await fs.writeFile(join(cwd, ".omp", "SYSTEM.md"), "Source SYSTEM_A_UNIQUE instructions.");
-  await fs.writeFile(join(destination, ".omp", "SYSTEM.md"), "Destination SYSTEM_B_UNIQUE instructions.");
-  await fs.writeFile(join(destination, ".omp", "config.yml"), "includeModelInPrompt: false\nincludeWorkspaceTree: true\ntask:\n  disabledAgents:\n    - scout\ndev:\n  autoqa: false\n");
+  await fs.writeFile(
+    join(destination, ".omp", "SYSTEM.md"),
+    "Destination SYSTEM_B_UNIQUE instructions.",
+  );
+  await fs.writeFile(
+    join(destination, ".omp", "config.yml"),
+    "includeModelInPrompt: false\nincludeWorkspaceTree: true\ntask:\n  disabledAgents:\n    - scout\ndev:\n  autoqa: false\n",
+  );
   await fs.writeFile(join(agentDir, "PERSONALITY.md"), "NATIVE_PERSONALITY_UNIQUE");
   await fs.mkdir(join(destination, ".omp", "agents"));
-  await fs.writeFile(join(destination, ".omp", "agents", "scope-check.md"), "---\nname: scope-check\ndescription: Scope fixture\nmodel: nav-fixture/fixture\nthinking-level: off\nspawns: '*'\n---\nSCOPE_CHILD_B_UNIQUE instructions.\n");
+  await fs.writeFile(
+    join(destination, ".omp", "agents", "scope-check.md"),
+    "---\nname: scope-check\ndescription: Scope fixture\nmodel: nav-fixture/fixture\nthinking-level: off\nspawns: '*'\n---\nSCOPE_CHILD_B_UNIQUE instructions.\n",
+  );
   const config = join(directory, "config.yml");
-  await fs.writeFile(config, "memory:\n  backend: off\nasync:\n  enabled: false\ntask:\n  structured: false\n  enableLsp: false\nlsp:\n  enabled: false\nmodelRoles:\n  default: nav-fixture/fixture\n  task: nav-fixture/fixture\nsetupVersion: 2\nstartup:\n  quiet: true\n  setupWizard: false\n  showSplash: false\n  checkUpdate: false\nmarketplace:\n  autoUpdate: false\n");
+  await fs.writeFile(
+    config,
+    "memory:\n  backend: off\nasync:\n  enabled: false\ntask:\n  structured: false\n  enableLsp: false\nlsp:\n  enabled: false\nmodelRoles:\n  default: nav-fixture/fixture\n  task: nav-fixture/fixture\nsetupVersion: 2\nstartup:\n  quiet: true\n  setupWizard: false\n  showSplash: false\n  checkUpdate: false\nmarketplace:\n  autoUpdate: false\n",
+  );
   const fixture = join(directory, "fixture.ts");
   const report = join(directory, "report.json");
   const used = join(directory, "provider-used");
   const callsPath = join(directory, "calls.jsonl");
-  await fs.writeFile(fixture, `import * as fs from "node:fs/promises";
+  await fs.writeFile(
+    fixture,
+    `import * as fs from "node:fs/promises";
 import * as fsSync from "node:fs";
 import { createMockModel } from "@oh-my-pi/pi-ai/providers/mock";
 import { registerCustomApi } from "@oh-my-pi/pi-ai/api-registry";
@@ -114,19 +153,52 @@ export default async function(pi) {
     const refused = { cwd: ctx.sessionManager.getCwd(), file: ctx.sessionManager.getSessionFile(), messages: lastCall().messages };
     await fs.writeFile(${JSON.stringify(report)}, JSON.stringify({ bridge: typeof ctx.requestWorkspaceChange === "function", matched: ref?.session?.sessionManager === ctx.sessionManager, tools: pi.getActiveTools(), before, after, returned, defaultPrompt, templatePrompt, refused, fakeCalls: mainCalls().length, childContexts: calls().filter(context => JSON.stringify(context.systemPrompt).includes("SCOPE_CHILD_B_UNIQUE")).map(context => context.systemPrompt), taskResult }));
   } });
-}`);
-  const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_CONFIG_DIR: relative(homedir(), join(directory, "configuration")) };
-  delete env.OMP_PROFILE; delete env.PI_PROFILE; delete env.PI_CONFIG_FILES;
+}`,
+  );
+  const env = {
+    ...process.env,
+    PI_CODING_AGENT_DIR: agentDir,
+    PI_CONFIG_DIR: relative(homedir(), join(directory, "configuration")),
+  };
+  delete env.OMP_PROFILE;
+  delete env.PI_PROFILE;
+  delete env.PI_CONFIG_FILES;
   for (const key of ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) {
     const target = join(directory, key.toLowerCase());
     await fs.mkdir(join(target, "omp"), { recursive: true });
     env[key] = target;
   }
-  await fs.appendFile(config, `extensions:\n  - ${JSON.stringify(join(import.meta.dir, "..", "src", "index.ts"))}\n  - ${JSON.stringify(fixture)}\n`);
-  const invocation = [Bun.which("omp")!, "-p", "--model", "nav-fixture/fixture", "--api-key", "test-unused", "--add-dir", destination, "--no-skills", "--append-system-prompt=APPEND_MARKER", "--config", config];
-  const child = Bun.spawn([...invocation, "/nav-fixture-probe"], { cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
-  if (code || !await fs.exists(report)) throw new Error(`Configured extension fixture failed: ${stderr}`);
+  await fs.appendFile(
+    config,
+    `extensions:\n  - ${JSON.stringify(join(import.meta.dir, "..", "src", "index.ts"))}\n  - ${JSON.stringify(fixture)}\n`,
+  );
+  const invocation = [
+    Bun.which("omp")!,
+    "-p",
+    "--model",
+    "nav-fixture/fixture",
+    "--api-key",
+    "test-unused",
+    "--add-dir",
+    destination,
+    "--no-skills",
+    "--append-system-prompt=APPEND_MARKER",
+    "--config",
+    config,
+  ];
+  const child = Bun.spawn([...invocation, "/nav-fixture-probe"], {
+    cwd,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [code, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  if (code || !(await fs.exists(report)))
+    throw new Error(`Configured extension fixture failed: ${stderr}`);
   expect(code).toBe(0);
   expect(stderr).not.toContain("Failed to load extension");
   expect(stdout).not.toContain("FAKE_PROVIDER_FALLBACK");
@@ -169,20 +241,48 @@ export default async function(pi) {
   expect(result.childContexts.length).toBeGreaterThan(0);
   expect(JSON.stringify(result.childContexts[0])).toContain("PROJECT_B_UNIQUE");
   expect(JSON.stringify(result.childContexts[0])).not.toContain("PROJECT_A_UNIQUE");
-  await fs.writeFile(join(destination, ".omp", "SYSTEM.md"), "Destination SYSTEM_B_UNIQUE instructions.");
+  await fs.writeFile(
+    join(destination, ".omp", "SYSTEM.md"),
+    "Destination SYSTEM_B_UNIQUE instructions.",
+  );
   await fs.unlink(callsPath);
-  const explicit = Bun.spawn([...invocation, "--system-prompt=CLI_FIXED_UNIQUE", "/nav-fixture-probe"], { cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [explicitCode, explicitStderr] = await Promise.all([explicit.exited, new Response(explicit.stderr).text(), new Response(explicit.stdout).text()]);
-  if (explicitCode) throw new Error(`Explicit prompt configured extension fixture failed: ${explicitStderr}`);
+  const explicit = Bun.spawn(
+    [...invocation, "--system-prompt=CLI_FIXED_UNIQUE", "/nav-fixture-probe"],
+    { cwd, env, stdout: "pipe", stderr: "pipe" },
+  );
+  const [explicitCode, explicitStderr] = await Promise.all([
+    explicit.exited,
+    new Response(explicit.stderr).text(),
+    new Response(explicit.stdout).text(),
+  ]);
+  if (explicitCode)
+    throw new Error(`Explicit prompt configured extension fixture failed: ${explicitStderr}`);
   const explicitResult = JSON.parse(await fs.readFile(report, "utf8"));
-  for (const prompt of [explicitResult.after.prompt, explicitResult.returned.prompt, explicitResult.defaultPrompt, explicitResult.templatePrompt]) {
+  for (const prompt of [
+    explicitResult.after.prompt,
+    explicitResult.returned.prompt,
+    explicitResult.defaultPrompt,
+    explicitResult.templatePrompt,
+  ]) {
     expect(prompt[0]).toBe("CLI_FIXED_UNIQUE");
   }
   await fs.unlink(join(cwd, ".omp", "SYSTEM.md"));
-  await fs.writeFile(join(destination, ".omp", "SYSTEM.md"), "Destination SYSTEM_B_UNIQUE instructions.");
+  await fs.writeFile(
+    join(destination, ".omp", "SYSTEM.md"),
+    "Destination SYSTEM_B_UNIQUE instructions.",
+  );
   await fs.unlink(callsPath);
-  const initialDefault = Bun.spawn([...invocation, "/nav-fixture-probe"], { cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [defaultCode, defaultStderr] = await Promise.all([initialDefault.exited, new Response(initialDefault.stderr).text(), new Response(initialDefault.stdout).text()]);
+  const initialDefault = Bun.spawn([...invocation, "/nav-fixture-probe"], {
+    cwd,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [defaultCode, defaultStderr] = await Promise.all([
+    initialDefault.exited,
+    new Response(initialDefault.stderr).text(),
+    new Response(initialDefault.stdout).text(),
+  ]);
   if (defaultCode) throw new Error(`Initial default configured fixture failed: ${defaultStderr}`);
   const initialDefaultResult = JSON.parse(await fs.readFile(report, "utf8"));
   expect(initialDefaultResult.after.prompt[0]).toContain("SYSTEM_B_UNIQUE");
@@ -194,30 +294,50 @@ export default async function(pi) {
 }, 30_000);
 
 test("configured package extension creates managed and exact worktrees through hosted native modules", async () => {
-  const directory = await fs.realpath(await fs.mkdtemp(join(tmpdir(), "omp-nav-config-worktrees-")));
+  const directory = await fs.realpath(
+    await fs.mkdtemp(join(tmpdir(), "omp-nav-config-worktrees-")),
+  );
   temporary.push(directory);
   const cwd = join(directory, "project");
   const managed = join(directory, "managed");
   const agentDir = join(directory, "agent");
-  await fs.mkdir(cwd); await fs.mkdir(agentDir);
+  await fs.mkdir(cwd);
+  await fs.mkdir(agentDir);
   const git = async (...args: string[]) => {
     const child = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
-    const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    const [code, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
     if (code) throw new Error(`Fixture git failed: ${stderr}`);
     return stdout;
   };
   await git("init", "-b", "main");
   await fs.writeFile(join(cwd, "tracked.txt"), "committed\n");
   await git("add", "tracked.txt");
-  await git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture");
+  await git(
+    "-c",
+    "user.name=Fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-m",
+    "fixture",
+  );
   await fs.writeFile(join(cwd, "tracked.txt"), "source changes\n");
   await fs.writeFile(join(cwd, "untracked.txt"), "source untracked\n");
   const initialStatus = await git("status", "--porcelain");
   const fixture = join(directory, "fixture.ts");
   const report = join(directory, "report.json");
   const config = join(directory, "config.yml");
-  await fs.writeFile(config, `memory:\n  backend: off\nasync:\n  enabled: false\ntask:\n  structured: false\n  enableLsp: false\nlsp:\n  enabled: false\nworktree:\n  base: ${JSON.stringify(managed)}\n  clone: false\nmodelRoles:\n  default: nav-fixture/fixture\nsetupVersion: 2\nstartup:\n  quiet: true\n  setupWizard: false\n  showSplash: false\n  checkUpdate: false\nmarketplace:\n  autoUpdate: false\nextensions:\n  - ${JSON.stringify(join(import.meta.dir, ".."))}\n  - ${JSON.stringify(fixture)}\n`);
-  await fs.writeFile(fixture, `import * as fs from "node:fs/promises";
+  await fs.writeFile(
+    config,
+    `memory:\n  backend: off\nasync:\n  enabled: false\ntask:\n  structured: false\n  enableLsp: false\nlsp:\n  enabled: false\nworktree:\n  base: ${JSON.stringify(managed)}\n  clone: false\nmodelRoles:\n  default: nav-fixture/fixture\nsetupVersion: 2\nstartup:\n  quiet: true\n  setupWizard: false\n  showSplash: false\n  checkUpdate: false\nmarketplace:\n  autoUpdate: false\nextensions:\n  - ${JSON.stringify(join(import.meta.dir, ".."))}\n  - ${JSON.stringify(fixture)}\n`,
+  );
+  await fs.writeFile(
+    fixture,
+    `import * as fs from "node:fs/promises";
 import { createMockModel } from "@oh-my-pi/pi-ai/providers/mock";
 import { registerCustomApi } from "@oh-my-pi/pi-ai/api-registry";
 import * as Registry from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
@@ -253,17 +373,46 @@ export default function(pi) {
     }
     await fs.writeFile(${JSON.stringify(report)}, JSON.stringify({ before, afterCreate, first, second, cleanContents, entered, returned, remaining: await ctx.listWorktrees(), identities, id: ctx.sessionManager.getSessionId(), messages: session.agent.state.messages }));
   }});
-}`);
-  const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_CONFIG_DIR: relative(homedir(), join(directory, "configuration")) };
-  delete env.OMP_PROFILE; delete env.PI_PROFILE; delete env.PI_CONFIG_FILES;
-  for (const key of ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) { const target = join(directory, key.toLowerCase()); await fs.mkdir(join(target, "omp"), { recursive: true }); env[key] = target; }
-  const child = Bun.spawn([Bun.which("omp")!, "-p", "--model", "nav-fixture/fixture", "--api-key", "test-unused", "--config", config, "/worktree-probe"], { cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
-  if (code || !await fs.exists(report)) throw new Error(`Configured worktree fixture failed: ${stderr}\n${stdout}`);
+}`,
+  );
+  const env = {
+    ...process.env,
+    PI_CODING_AGENT_DIR: agentDir,
+    PI_CONFIG_DIR: relative(homedir(), join(directory, "configuration")),
+  };
+  delete env.OMP_PROFILE;
+  delete env.PI_PROFILE;
+  delete env.PI_CONFIG_FILES;
+  for (const key of ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) {
+    const target = join(directory, key.toLowerCase());
+    await fs.mkdir(join(target, "omp"), { recursive: true });
+    env[key] = target;
+  }
+  const child = Bun.spawn(
+    [
+      Bun.which("omp")!,
+      "-p",
+      "--model",
+      "nav-fixture/fixture",
+      "--api-key",
+      "test-unused",
+      "--config",
+      config,
+      "/worktree-probe",
+    ],
+    { cwd, env, stdout: "pipe", stderr: "pipe" },
+  );
+  const [code, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  if (code || !(await fs.exists(report)))
+    throw new Error(`Configured worktree fixture failed: ${stderr}\n${stdout}`);
   expect(stderr).not.toContain("Failed to load extension");
   const result = JSON.parse(await fs.readFile(report, "utf8"));
-  expect(Object.values(result.identities).every(value => value === true)).toBe(true);
-  expect(result.first.path.startsWith(managed + "/")).toBe(true);
+  expect(Object.values(result.identities).every((value) => value === true)).toBe(true);
+  expect(result.first.path.startsWith(`${managed}/`)).toBe(true);
   expect(result.second.path).toBe(join(cwd, ".claude/worktree/exact-fixture"));
   expect(result.afterCreate).toEqual({ cwd: result.before.cwd, file: result.before.file });
   expect(result.id).toBe(result.before.id);
@@ -273,7 +422,13 @@ export default function(pi) {
   expect(result.remaining).toHaveLength(1);
   expect(result.remaining[0].primary).toBe(true);
   expect(await git("status", "--porcelain")).toBe(initialStatus);
-  expect(await git("branch", "--list", "managed-fixture", "exact-fixture")).toContain("managed-fixture");
-  expect(await git("branch", "--list", "managed-fixture", "exact-fixture")).toContain("exact-fixture");
-  expect(await fs.readFile(join(cwd, ".git/info/exclude"), "utf8")).toContain("/.claude/worktree/exact-fixture/");
+  expect(await git("branch", "--list", "managed-fixture", "exact-fixture")).toContain(
+    "managed-fixture",
+  );
+  expect(await git("branch", "--list", "managed-fixture", "exact-fixture")).toContain(
+    "exact-fixture",
+  );
+  expect(await fs.readFile(join(cwd, ".git/info/exclude"), "utf8")).toContain(
+    "/.claude/worktree/exact-fixture/",
+  );
 }, 30_000);

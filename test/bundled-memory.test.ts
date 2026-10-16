@@ -1,22 +1,41 @@
 import { expect, test } from "bun:test";
+import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { promisify } from "node:util";
-import { execFile } from "node:child_process";
 
 test("normal bundled omp config owns independent Mnemopi banks, native tools and embedding lifetime", async () => {
   const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), "omp-nav-bundled-memory-")));
   try {
-    const primary = join(root, "primary"), wt = join(root, "wt"), wt2 = join(root, "wt2"), other = join(root, "other"), agentDir = join(root, "agent");
-    await Promise.all([primary, other, agentDir].map(path => fs.mkdir(path)));
+    const primary = join(root, "primary"),
+      wt = join(root, "wt"),
+      wt2 = join(root, "wt2"),
+      other = join(root, "other"),
+      agentDir = join(root, "agent");
+    await Promise.all([primary, other, agentDir].map((path) => fs.mkdir(path)));
     const git = promisify(execFile);
     await git("git", ["init", primary]);
-    await git("git", ["-C", primary, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "fixture"]);
+    await git("git", [
+      "-C",
+      primary,
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.invalid",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "fixture",
+    ]);
     await git("git", ["-C", primary, "worktree", "add", "-b", "one", wt]);
     await git("git", ["-C", primary, "worktree", "add", "-b", "two", wt2]);
-    const fixture = join(root, "fixture.ts"), config = join(root, "config.yml"), report = join(root, "report.json");
-    await fs.writeFile(fixture, `
+    const fixture = join(root, "fixture.ts"),
+      config = join(root, "config.yml"),
+      report = join(root, "report.json");
+    await fs.writeFile(
+      fixture,
+      `
 import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import {join} from "node:path";
@@ -138,15 +157,63 @@ export default async function(pi) {
     }
   }});
 }
-`);
+`,
+    );
     // The normal CLI reads extensions from config; no source CLI or launcher is invoked.
-    await fs.writeFile(config, `extensions:\n  - ${JSON.stringify(fixture)}\nmemory:\n  backend: mnemopi\nmnemopi:\n  dbPath: ${JSON.stringify(join(root,"memory","mnemopi.db"))}\n  bank: fixture-prefix\n  noEmbeddings: true\n  llmMode: none\n  autoRecall: false\n  autoRetain: false\nasync:\n  enabled: false\nlsp:\n  enabled: false\nautolearn:\n  enabled: false\nsetupVersion: 2\nstartup:\n  quiet: true\n  setupWizard: false\n  checkUpdate: false\nmarketplace:\n  autoUpdate: false\n`);
-    const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_CONFIG_DIR: relative(homedir(), join(root, "configuration")), XDG_DATA_HOME: join(root, "data"), XDG_STATE_HOME: join(root, "state"), XDG_CACHE_HOME: join(root, "cache") };
-    delete env.OMP_PROFILE; delete env.PI_PROFILE; delete env.PI_CONFIG_FILES;
-    const proc = Bun.spawn([Bun.which("omp")!, "-p", "--model", "memory-fixture/fixture", "--api-key", "unused", "--no-session", "--no-skills", "--config", config, "/nav-memory-proof"], { cwd: primary, env, stdout: "pipe", stderr: "pipe" });
-    const [code, stdout, stderr] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-    if (code || !await fs.exists(report)) throw new Error(`Bundled memory fixture failed (${code}): ${stderr}\n${stdout}\n${await fs.readFile(join(root,"failure.json"),"utf8").catch(()=>"")}`);
-    expect(code).toBe(0); expect(stderr).not.toContain("Failed to load extension");
-    expect(JSON.parse(await fs.readFile(report, "utf8"))).toEqual({ banks: 4, startupProviderCalls: 1, llmCalls: 1, nativeStored: 1, failedProviderCalls: 0, heldEmbedding: true, clientTerminates: 1, transportTerminates: 1, nativeStats: true });
-  } finally { await fs.rm(root, { recursive: true, force: true }); }
+    await fs.writeFile(
+      config,
+      `extensions:\n  - ${JSON.stringify(fixture)}\nmemory:\n  backend: mnemopi\nmnemopi:\n  dbPath: ${JSON.stringify(join(root, "memory", "mnemopi.db"))}\n  bank: fixture-prefix\n  noEmbeddings: true\n  llmMode: none\n  autoRecall: false\n  autoRetain: false\nasync:\n  enabled: false\nlsp:\n  enabled: false\nautolearn:\n  enabled: false\nsetupVersion: 2\nstartup:\n  quiet: true\n  setupWizard: false\n  checkUpdate: false\nmarketplace:\n  autoUpdate: false\n`,
+    );
+    const env = {
+      ...process.env,
+      PI_CODING_AGENT_DIR: agentDir,
+      PI_CONFIG_DIR: relative(homedir(), join(root, "configuration")),
+      XDG_DATA_HOME: join(root, "data"),
+      XDG_STATE_HOME: join(root, "state"),
+      XDG_CACHE_HOME: join(root, "cache"),
+    };
+    delete env.OMP_PROFILE;
+    delete env.PI_PROFILE;
+    delete env.PI_CONFIG_FILES;
+    const proc = Bun.spawn(
+      [
+        Bun.which("omp")!,
+        "-p",
+        "--model",
+        "memory-fixture/fixture",
+        "--api-key",
+        "unused",
+        "--no-session",
+        "--no-skills",
+        "--config",
+        config,
+        "/nav-memory-proof",
+      ],
+      { cwd: primary, env, stdout: "pipe", stderr: "pipe" },
+    );
+    const [code, stdout, stderr] = await Promise.all([
+      proc.exited,
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    if (code || !(await fs.exists(report)))
+      throw new Error(
+        `Bundled memory fixture failed (${code}): ${stderr}\n${stdout}\n${await fs.readFile(join(root, "failure.json"), "utf8").catch(() => "")}`,
+      );
+    expect(code).toBe(0);
+    expect(stderr).not.toContain("Failed to load extension");
+    expect(JSON.parse(await fs.readFile(report, "utf8"))).toEqual({
+      banks: 4,
+      startupProviderCalls: 1,
+      llmCalls: 1,
+      nativeStored: 1,
+      failedProviderCalls: 0,
+      heldEmbedding: true,
+      clientTerminates: 1,
+      transportTerminates: 1,
+      nativeStats: true,
+    });
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 }, 30000);

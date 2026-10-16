@@ -41,7 +41,10 @@ export interface ToolCallContext {
 export type ToolCallGate = (
   context: ToolCallContext,
   signal?: AbortSignal,
-) => Promise<{ block?: boolean; reason?: string; [key: string]: unknown } | undefined> | { block?: boolean; reason?: string } | undefined;
+) =>
+  | Promise<{ block?: boolean; reason?: string; [key: string]: unknown } | undefined>
+  | { block?: boolean; reason?: string }
+  | undefined;
 
 export interface SessionLike {
   sessionManager: SessionManagerLike;
@@ -52,7 +55,12 @@ export interface SessionLike {
   agent: {
     beforeToolCall?: ToolCallGate;
     addBeforeModelCallHook(hook: (signal?: AbortSignal) => Promise<void>): () => void;
-    addBeforeModelCall(hook: (context: { messages: Array<{ role: string; content: unknown }> }, signal?: AbortSignal) => Promise<void>): () => void;
+    addBeforeModelCall(
+      hook: (
+        context: { messages: Array<{ role: string; content: unknown }> },
+        signal?: AbortSignal,
+      ) => Promise<void>,
+    ): () => void;
     appendMessage(message: unknown): void;
     setSystemPrompt(prompt: string[]): void;
     state: { tools: unknown[]; systemPrompt: string[]; messages: unknown[] };
@@ -109,8 +117,19 @@ export interface RuntimeModules {
   importModule<T>(specifier: string): Promise<T>;
 }
 
-export interface ToolApprovalDecisionLike { tier: "read" | "write" | "exec"; reason?: string; override?: boolean; policy?: "allow" | "deny" | "prompt"; policyKey?: string; }
-export type ToolApprovalLike = "read" | "write" | "exec" | ToolApprovalDecisionLike | ((args: unknown) => "read" | "write" | "exec" | ToolApprovalDecisionLike);
+export interface ToolApprovalDecisionLike {
+  tier: "read" | "write" | "exec";
+  reason?: string;
+  override?: boolean;
+  policy?: "allow" | "deny" | "prompt";
+  policyKey?: string;
+}
+export type ToolApprovalLike =
+  | "read"
+  | "write"
+  | "exec"
+  | ToolApprovalDecisionLike
+  | ((args: unknown) => "read" | "write" | "exec" | ToolApprovalDecisionLike);
 export interface ToolDefinitionLike {
   name: string;
   label: string;
@@ -119,13 +138,31 @@ export interface ToolDefinitionLike {
   approval?: ToolApprovalLike;
   formatApprovalDetails?: (args: unknown) => string | string[] | undefined;
   loadMode?: "essential" | "discoverable";
-  execute(id: string, params: Record<string, unknown>, signal: AbortSignal | undefined, update: unknown, ctx: ExtensionContextLike): Promise<unknown>;
+  execute(
+    id: string,
+    params: Record<string, unknown>,
+    signal: AbortSignal | undefined,
+    update: unknown,
+    ctx: ExtensionContextLike,
+  ): Promise<unknown>;
 }
 
 export interface ExtensionApiLike {
   pi: HostNamespace;
   registerTool(tool: ToolDefinitionLike): void;
-  registerCommand(name: string, command: { description: string; handler(args: string, ctx: ExtensionContextLike): Promise<void> }): void;
-  on(event: string, handler: (event: { type: string; [key: string]: unknown }, ctx: ExtensionContextLike) => Promise<void> | void): void;
+  registerCommand(
+    name: string,
+    command: {
+      description: string;
+      handler(args: string, ctx: ExtensionContextLike): Promise<void>;
+    },
+  ): void;
+  on(
+    event: string,
+    handler: (
+      event: { type: string; [key: string]: unknown },
+      ctx: ExtensionContextLike,
+    ) => Promise<void> | void,
+  ): void;
   [key: string]: unknown;
 }

@@ -10,7 +10,11 @@ afterEach(async () => {
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
   const child = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
-  const [code, output, error] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  const [code, output, error] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
   if (code) throw new Error(error);
   return output.trim();
 }
@@ -18,31 +22,59 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
 async function fixture(mode: "tui" | "rpc") {
   const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), `omp-nav-${mode}-`)));
   temporary.push(root);
-  const a = join(root, "A"); const b = join(root, "B"); const agentDir = join(root, "agent");
+  const a = join(root, "A");
+  const b = join(root, "B");
+  const agentDir = join(root, "agent");
   const worktree = join(a, ".claude", "worktree", "integration");
   const report = join(root, "report.json");
   const config = join(root, "config.yml");
   await fs.mkdir(agentDir);
-  await fs.writeFile(config, "memory:\n  backend: off\nsetupVersion: 2\nstartup:\n  quiet: true\n  setupWizard: false\n  showSplash: false\n  checkUpdate: false\nmarketplace:\n  autoUpdate: false\nlsp:\n  shared: false\nskills:\n  enableAgentsUser: false\n  enablePiUser: false\n  enableCodexUser: false\n  enableClaudeUser: false\n");
-  for (const [cwd, marker, timeout] of [[a, "A", 60], [b, "B", 70]] as const) {
+  await fs.writeFile(
+    config,
+    "memory:\n  backend: off\nsetupVersion: 2\nstartup:\n  quiet: true\n  setupWizard: false\n  showSplash: false\n  checkUpdate: false\nmarketplace:\n  autoUpdate: false\nlsp:\n  shared: false\nskills:\n  enableAgentsUser: false\n  enablePiUser: false\n  enableCodexUser: false\n  enableClaudeUser: false\n",
+  );
+  for (const [cwd, marker, timeout] of [
+    [a, "A", 60],
+    [b, "B", 70],
+  ] as const) {
     await fs.mkdir(join(cwd, ".omp", "skills", `scope-${marker}`), { recursive: true });
     await fs.mkdir(join(cwd, ".omp", "commands"), { recursive: true });
-    await fs.writeFile(join(cwd, "AGENTS.md"), `Only PROJECT_${marker}_INTEGRATION instructions apply here.`);
-    await fs.writeFile(join(cwd, ".omp", "skills", `scope-${marker}`, "SKILL.md"), `---\nname: scope-${marker}\ndescription: Scope ${marker} integration skill\n---\nIntegration skill ${marker}.\n`);
+    await fs.writeFile(
+      join(cwd, "AGENTS.md"),
+      `Only PROJECT_${marker}_INTEGRATION instructions apply here.`,
+    );
+    await fs.writeFile(
+      join(cwd, ".omp", "skills", `scope-${marker}`, "SKILL.md"),
+      `---\nname: scope-${marker}\ndescription: Scope ${marker} integration skill\n---\nIntegration skill ${marker}.\n`,
+    );
     await fs.writeFile(join(cwd, ".omp", "commands", `command-${marker}.md`), `Command ${marker}.`);
     await fs.writeFile(join(cwd, ".omp", "config.yml"), `tools:\n  maxTimeout: ${timeout}\n`);
-    await fs.writeFile(join(cwd, "go.mod"), `module example.invalid/navigation${marker}\n\ngo 1.27\n`);
+    await fs.writeFile(
+      join(cwd, "go.mod"),
+      `module example.invalid/navigation${marker}\n\ngo 1.27\n`,
+    );
     await fs.writeFile(join(cwd, "fixture.go"), "package navigation\n\nvar Marker int = 1\n");
     await git(cwd, "init", "-b", "main");
     await git(cwd, "add", ".");
-    await git(cwd, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "integration fixture");
+    await git(
+      cwd,
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit",
+      "-m",
+      "integration fixture",
+    );
   }
   const fixturePath = join(root, "fixture.ts");
   const callsPath = join(root, "calls.jsonl");
   const nextToolsPath = join(root, "next-tools.json");
   const btwStartedPath = join(root, "btw-started");
   const btwReleasePath = join(root, "btw-release");
-  await fs.writeFile(fixturePath, `import * as fs from "node:fs/promises";
+  await fs.writeFile(
+    fixturePath,
+    `import * as fs from "node:fs/promises";
 import * as fsSync from "node:fs";
 import { createMockModel } from "@oh-my-pi/pi-ai/providers/mock";
 import { registerCustomApi } from "@oh-my-pi/pi-ai/api-registry";
@@ -138,18 +170,44 @@ export default async function(pi) {
     } catch (error) { await fs.writeFile(${JSON.stringify(report)}, JSON.stringify({ fixtureError: String(error) })); }
     finally { ctx.shutdown(); }
   } });
-}`);
+}`,
+  );
   await fs.mkdir(join(root, "outside"));
-  const env: Record<string, string | undefined> = { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_CONFIG_DIR: relative(homedir(), join(root, "configuration")), TERM: "xterm-256color", GOTOOLCHAIN: "local", GOPROXY: "off", GOSUMDB: "off", GOCACHE: join(root, "go-cache"), GOPATH: join(root, "go-path") };
-  delete env.OMP_PROFILE; delete env.PI_PROFILE; delete env.PI_CONFIG_FILES;
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    PI_CODING_AGENT_DIR: agentDir,
+    PI_CONFIG_DIR: relative(homedir(), join(root, "configuration")),
+    TERM: "xterm-256color",
+    GOTOOLCHAIN: "local",
+    GOPROXY: "off",
+    GOSUMDB: "off",
+    GOCACHE: join(root, "go-cache"),
+    GOPATH: join(root, "go-path"),
+  };
+  delete env.OMP_PROFILE;
+  delete env.PI_PROFILE;
+  delete env.PI_CONFIG_FILES;
   delete env.OMP_AGENT_NAV_RUNTIME_ROOT;
   for (const key of ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) {
     const target = join(root, key.toLowerCase());
     await fs.mkdir(join(target, "omp"), { recursive: true });
     env[key] = target;
   }
-  await fs.appendFile(config, `extensions:\n  - ${JSON.stringify(join(import.meta.dir, "..", "src", "index.ts"))}\n  - ${JSON.stringify(fixturePath)}\n`);
-  const args = [Bun.which("omp")!, "--model", "integration-fixture/fixture", "--api-key", "fixture-unused", "--add-dir", b, "--config", config];
+  await fs.appendFile(
+    config,
+    `extensions:\n  - ${JSON.stringify(join(import.meta.dir, "..", "src", "index.ts"))}\n  - ${JSON.stringify(fixturePath)}\n`,
+  );
+  const args = [
+    Bun.which("omp")!,
+    "--model",
+    "integration-fixture/fixture",
+    "--api-key",
+    "fixture-unused",
+    "--add-dir",
+    b,
+    "--config",
+    config,
+  ];
   return { root, a, b, worktree, report, env, args };
 }
 
@@ -158,7 +216,9 @@ async function run(mode: "tui" | "rpc") {
   let args: string[];
   if (mode === "tui") {
     const driver = join(f.root, "tui-driver.py");
-    await fs.writeFile(driver, `import os,subprocess,json,pty,select,time,fcntl,termios,struct,sys
+    await fs.writeFile(
+      driver,
+      `import os,subprocess,json,pty,select,time,fcntl,termios,struct,sys
 master,slave=pty.openpty()
 fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',40,140,0,0))
 child=subprocess.Popen(json.loads(sys.argv[1]),stdin=slave,stdout=slave,stderr=slave)
@@ -184,20 +244,54 @@ try:
 finally: os.close(master)
 sys.stdout.buffer.write(output)
 sys.exit(child.returncode)
-`);
+`,
+    );
     args = ["python3", driver, JSON.stringify([...f.args, "/integration-run"])];
   } else args = [...f.args, "--mode", "rpc"];
-  const child = Bun.spawn(args, { cwd: f.a, env: f.env, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn(args, {
+    cwd: f.a,
+    env: f.env,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   if (mode === "rpc") {
-    child.stdin.write(`${JSON.stringify({ id: "btw", type: "btw", question: "BTW_HELD_INTEGRATION" })}\n`);
-    child.stdin.write(`${JSON.stringify({ id: "integration", type: "prompt", message: "/integration-run" })}\n`);
+    child.stdin.write(
+      `${JSON.stringify({ id: "btw", type: "btw", question: "BTW_HELD_INTEGRATION" })}\n`,
+    );
+    child.stdin.write(
+      `${JSON.stringify({ id: "integration", type: "prompt", message: "/integration-run" })}\n`,
+    );
   }
-  const reportWatcher = mode === "rpc" ? setInterval(async () => { if (await fs.exists(f.report)) { clearInterval(reportWatcher); child.stdin.end(); } }, 50) : undefined;
-  const timeout = setTimeout(() => { child.stdin.end(); child.kill(); }, 80_000);
-  let code: number; let stdout: string; let stderr: string;
-  try { [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]); }
-  finally { clearTimeout(timeout); clearInterval(reportWatcher); child.stdin.end(); }
-  if (code || !await fs.exists(f.report)) throw new Error(`${mode} integration failed (${code}): ${stderr}\n${stdout.slice(-6000)}`);
+  const reportWatcher =
+    mode === "rpc"
+      ? setInterval(async () => {
+          if (await fs.exists(f.report)) {
+            clearInterval(reportWatcher);
+            child.stdin.end();
+          }
+        }, 50)
+      : undefined;
+  const timeout = setTimeout(() => {
+    child.stdin.end();
+    child.kill();
+  }, 80_000);
+  let code: number;
+  let stdout: string;
+  let stderr: string;
+  try {
+    [code, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+    clearInterval(reportWatcher);
+    child.stdin.end();
+  }
+  if (code || !(await fs.exists(f.report)))
+    throw new Error(`${mode} integration failed (${code}): ${stderr}\n${stdout.slice(-6000)}`);
   expect(stderr).not.toContain("Failed to load extension");
   const result = JSON.parse(await fs.readFile(f.report, "utf8"));
   if (result.fixtureError) throw new Error(result.fixtureError);
@@ -227,7 +321,9 @@ sys.exit(child.returncode)
   expect(JSON.stringify(result.returned.state.prompt)).not.toContain("PROJECT_B_INTEGRATION");
   expect(JSON.stringify(result.primaryWorkspace)).toContain("No issues found");
   expect(JSON.stringify(result.primaryGopls)).not.toContain("MissingOnlyInWorktree");
-  expect(result.primaryLsp.clients.some((client: { name: string }) => client.name.includes("gopls"))).toBe(true);
+  expect(
+    result.primaryLsp.clients.some((client: { name: string }) => client.name.includes("gopls")),
+  ).toBe(true);
   expect(result.afterCreate.cwd).toBe(f.a);
   expect(result.list.some((entry: { path: string }) => entry.path === f.worktree)).toBe(true);
   expect(result.inWorktree.cwd).toBe(f.worktree);
@@ -244,8 +340,11 @@ sys.exit(child.returncode)
   expect(await git(f.a, "rev-parse", "integration")).not.toBe(await git(f.a, "rev-parse", "main"));
   expect(await git(f.a, "show", "integration:fixture.go")).toContain("MissingOnlyInWorktree");
   expect(await git(f.a, "show", "main:fixture.go")).not.toContain("MissingOnlyInWorktree");
-  const persisted = (await fs.readFile(result.afterRemove.file, "utf8")).trim().split("\n").map(line => JSON.parse(line));
-  const header = persisted.find(entry => entry.type === "session");
+  const persisted = (await fs.readFile(result.afterRemove.file, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const header = persisted.find((entry) => entry.type === "session");
   expect(header.id).toBe(result.before.id);
   expect(header.cwd).toBe(f.a);
   expect(await git(f.a, "status", "--porcelain")).toBe("");
@@ -258,5 +357,9 @@ sys.exit(child.returncode)
   if (mode === "rpc") expect(stdout).toContain('"command":"prompt","success":true');
 }
 
-test("ordinary omp TUI moves A/B/A, runs gopls against the worktree branch and safely removes it", async () => { await run("tui"); }, 90_000);
-test("ordinary omp RPC exposes the same navigation contract, context and worktree lifecycle", async () => { await run("rpc"); }, 90_000);
+test("ordinary omp TUI moves A/B/A, runs gopls against the worktree branch and safely removes it", async () => {
+  await run("tui");
+}, 90_000);
+test("ordinary omp RPC exposes the same navigation contract, context and worktree lifecycle", async () => {
+  await run("rpc");
+}, 90_000);

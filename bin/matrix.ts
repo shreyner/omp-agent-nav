@@ -18,8 +18,12 @@ for (const version of versions) {
   const prefix = join("/tmp/omp-matrix", version);
   console.log(`\n=== omp ${version}: install into ${prefix} ===`);
   await Bun.$`rm -rf ${prefix}`.quiet();
-  const install = await Bun.$`npm --prefix ${prefix} install --no-audit --no-fund @oh-my-pi/pi-coding-agent@${version}`.quiet().nothrow();
-  if (install.exitCode) throw new Error(`npm install failed for ${version}:\n${install.stderr.toString()}`);
+  const install =
+    await Bun.$`npm --prefix ${prefix} install --no-audit --no-fund @oh-my-pi/pi-coding-agent@${version}`
+      .quiet()
+      .nothrow();
+  if (install.exitCode)
+    throw new Error(`npm install failed for ${version}:\n${install.stderr.toString()}`);
   const ompBin = join(prefix, "node_modules", ".bin", "omp");
   const versionCheck = await Bun.$`${ompBin} --version`.quiet().nothrow();
   if (versionCheck.exitCode || !versionCheck.stdout.toString().trim().endsWith(version))
@@ -34,7 +38,9 @@ for (const version of versions) {
   });
   const code = await proc.exited;
   const ok = code === 0;
-  console.log(`=== omp ${version}: ${ok ? "PASS" : "FAIL"} in ${Math.round((Date.now() - started) / 1000)}s ===`);
+  console.log(
+    `=== omp ${version}: ${ok ? "PASS" : "FAIL"} in ${Math.round((Date.now() - started) / 1000)}s ===`,
+  );
   if (!ok) failures.push(version);
 }
 if (failures.length) {

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { pathToFileURL } from "node:url";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 test("actual native session disposal leaves the process embedding singleton alive until shutdown", async () => {
   const runtimeFile = pathToFileURL(join(import.meta.dir, "..", "src", "runtime.ts")).href;
@@ -49,7 +49,11 @@ await auth.close();await fs.rm(root,{recursive:true,force:true});
 process.stdout.write(JSON.stringify({passed:true,terminations,mockCalls:model.calls.length}));
 `;
   const child = Bun.spawn([process.execPath, "-e", script], { stdout: "pipe", stderr: "pipe" });
-  const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  const [code, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
   expect(stderr).toBe("");
   expect(code).toBe(0);
   expect(JSON.parse(stdout)).toEqual({ passed: true, terminations: 1, mockCalls: 2 });

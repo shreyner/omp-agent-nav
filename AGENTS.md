@@ -20,7 +20,9 @@
 
 ## Проверки
 
-- Запускай focused `bun test ./test/<затронутые файлы>` и `bun run check`. Check — сборка Bun с external packages, а не проверка TypeScript compiler.
+- Запускай focused `bun test ./test/<затронутые файлы>` и `bun run check`. Check — сборка Bun с external packages плюс статический гейт `biome check --error-on-warnings .`; проверкой TypeScript compiler он не является.
+- Стиль кода держит Biome 2.5.15: `bun run lint`, `lint:fix`, `fix:unsafe`, `format`, `format:check`; `bun run matrix` прогоняет версии omp. `fix:unsafe` запускай только с ревью диффа — unsafe-фикс уже ломал тип в тесте (2026-10-16). Отключены осознанно: `noNamespaceImport` (namespace-импорты node-builtin'ов — принятый стиль кода), `noExplicitAny` и `noNonNullAssertion` (cast-стиль апстрима pi). Конфиг — [biome.json](biome.json).
+- В `node_modules` лежит только `@biomejs/biome`; omp объявлен optional peer — иначе `bun install` притягивает установленный хост в репозиторий и ломает PATH-резолв omp тестами и матрицей.
 - Полные проверки проекта выполняются через `bun run test`. Не заменяй behavioral tests поиском строк исходника и не используй `mock.module()`.
 - Git, session storage, LSP и память проверяй во временных fixtures; пользовательские worktree, банки и настройки не использовать как расходные данные.
 - Отдельно различай штатный LSP workspace checker `file:"*"` и запросы `*.go`, которые идут через gopls.

@@ -2,9 +2,15 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+
+import {
+  type NavigationRuntime,
+  pathIsWithin,
+  resolveProjectIdentity,
+  WorkspaceNavigation,
+} from "../src/navigation";
 import { createRuntime, findInstalledOmp } from "../src/runtime";
-import type { HostNamespace } from "../src/types";
-import { pathIsWithin, resolveProjectIdentity, WorkspaceNavigation, type NavigationRuntime } from "../src/navigation";
+import { type HostNamespace } from "../src/types";
 
 const runtime = createRuntime({} as HostNamespace, findInstalledOmp());
 const temporary: string[] = [];
@@ -14,7 +20,11 @@ afterEach(async () => {
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
   const process = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
-  const [code, output, error] = await Promise.all([process.exited, new Response(process.stdout).text(), new Response(process.stderr).text()]);
+  const [code, output, error] = await Promise.all([
+    process.exited,
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+  ]);
   if (code) throw new Error(`git ${args[0]} failed: ${error}`);
   return output.trim();
 }
@@ -39,13 +49,38 @@ async function fixture(customRuntime: NavigationRuntime = runtime) {
   const managedBase = path.join(root, "managed");
   await runtime.importModule("config/all-settings.ts");
   const { Settings } = await runtime.importModule<any>("config/settings.ts");
-  const settings = Settings.isolated({ "worktree.base": managedBase, "worktree.clone": true, "isolation.backend": "auto" });
+  const settings = Settings.isolated({
+    "worktree.base": managedBase,
+    "worktree.clone": true,
+    "isolation.backend": "auto",
+  });
   let cwd = a;
   let grants: string[] = [];
   let agents: string[] = [];
-  const nav = new WorkspaceNavigation(customRuntime, { initialCwd: a, getCwd: () => cwd, getWorkspaceRoots: () => grants,
-    getLiveAgentCwds: () => agents, getSettings: () => settings });
-  return { root, a, b, nav, settings, managedBase, move: (directory: string) => { cwd = directory; }, grant: (...directories: string[]) => { grants = directories; }, agents: (...directories: string[]) => { agents = directories; } };
+  const nav = new WorkspaceNavigation(customRuntime, {
+    initialCwd: a,
+    getCwd: () => cwd,
+    getWorkspaceRoots: () => grants,
+    getLiveAgentCwds: () => agents,
+    getSettings: () => settings,
+  });
+  return {
+    root,
+    a,
+    b,
+    nav,
+    settings,
+    managedBase,
+    move: (directory: string) => {
+      cwd = directory;
+    },
+    grant: (...directories: string[]) => {
+      grants = directories;
+    },
+    agents: (...directories: string[]) => {
+      agents = directories;
+    },
+  };
 }
 
 describe("accepted roots and project identity", () => {
@@ -61,7 +96,7 @@ describe("accepted roots and project identity", () => {
     f.grant();
     await expect(f.nav.listWorktrees()).rejects.toThrow("permission");
     expect(await f.nav.validateMove(f.a)).toBe(f.a);
-    expect(pathIsWithin(f.a, f.a + "-other")).toBe(false);
+    expect(pathIsWithin(f.a, `${f.a}-other`)).toBe(false);
     expect(pathIsWithin(f.a, path.join(f.a, "..valid"))).toBe(true);
   });
 
@@ -69,12 +104,17 @@ describe("accepted roots and project identity", () => {
     const f = await fixture();
     f.grant(f.b);
     f.move(f.b);
-    const wt = await f.nav.createWorktree({ branch: "b-work", path: path.join(f.root, "managed", "b-work") });
+    const wt = await f.nav.createWorktree({
+      branch: "b-work",
+      path: path.join(f.root, "managed", "b-work"),
+    });
     const identity = await resolveProjectIdentity(runtime, wt.path);
     expect(identity.mainRoot).toBe(f.b);
     expect(identity.bankPath).toBe(f.b);
     await fs.mkdir(path.join(wt.path, "nested"));
-    expect((await resolveProjectIdentity(runtime, path.join(wt.path, "nested"))).bankPath).toBe(path.join(f.b, "nested"));
+    expect((await resolveProjectIdentity(runtime, path.join(wt.path, "nested"))).bankPath).toBe(
+      path.join(f.b, "nested"),
+    );
     expect((await resolveProjectIdentity(runtime, path.join(f.a))).bankPath).toBe(f.a);
     f.move(f.a);
     expect(await f.nav.validateMove(wt.path)).toBe(wt.path);
@@ -92,10 +132,21 @@ describe("accepted roots and project identity", () => {
     f.grant(f.root, f.b);
     await fs.symlink(sourceMetadata, path.join(f.a, "source-alias"));
     await fs.symlink(acceptedMetadata, path.join(f.a, "accepted-alias"));
-    for (const target of [sourceMetadata, path.join(sourceMetadata, "objects"), acceptedMetadata, path.join(f.a, "source-alias"), path.join(f.a, "accepted-alias", "objects")]) {
+    for (const target of [
+      sourceMetadata,
+      path.join(sourceMetadata, "objects"),
+      acceptedMetadata,
+      path.join(f.a, "source-alias"),
+      path.join(f.a, "accepted-alias", "objects"),
+    ]) {
       await expect(f.nav.validateMove(target)).rejects.toThrow("Git metadata");
     }
-    await expect(f.nav.createWorktree({ branch: "metadata-child", path: path.join(acceptedMetadata, "child") })).rejects.toThrow("Git metadata");
+    await expect(
+      f.nav.createWorktree({
+        branch: "metadata-child",
+        path: path.join(acceptedMetadata, "child"),
+      }),
+    ).rejects.toThrow("Git metadata");
     expect(await git(f.a, "branch", "--list", "metadata-child")).toBe("");
   });
 });
@@ -103,30 +154,52 @@ describe("accepted roots and project identity", () => {
 describe("worktree creation", () => {
   test("an exact nested path preserves dirty source, ignores locally, and disables clone", async () => {
     const calls: Record<string, unknown>[] = [];
-    const instrumented: NavigationRuntime = { async importModule<T>(specifier: string): Promise<T> {
-      const module = await runtime.importModule<any>(specifier);
-      if (specifier !== "@oh-my-pi/pi-natives/vcs") return module;
-      return { ...module, git(cwd: string) {
-        const repo = module.git(cwd);
-        return repo ? new Proxy(repo, { get(target, key) {
-          if (key === "worktreeAdd") return async (location: string, ref: string, options: Record<string, unknown>) => { calls.push(options); return await target.worktreeAdd(location, ref, options); };
-          const value = Reflect.get(target, key);
-          return typeof value === "function" ? value.bind(target) : value;
-        } }) : null;
-      } } as T;
-    } };
+    const instrumented: NavigationRuntime = {
+      async importModule<T>(specifier: string): Promise<T> {
+        const module = await runtime.importModule<any>(specifier);
+        if (specifier !== "@oh-my-pi/pi-natives/vcs") return module;
+        return {
+          ...module,
+          git(cwd: string) {
+            const repo = module.git(cwd);
+            return repo
+              ? new Proxy(repo, {
+                  get(target, key) {
+                    if (key === "worktreeAdd")
+                      return async (
+                        location: string,
+                        ref: string,
+                        options: Record<string, unknown>,
+                      ) => {
+                        calls.push(options);
+                        return await target.worktreeAdd(location, ref, options);
+                      };
+                    const value = Reflect.get(target, key);
+                    return typeof value === "function" ? value.bind(target) : value;
+                  },
+                })
+              : null;
+          },
+        } as T;
+      },
+    };
     const f = await fixture(instrumented);
     await fs.writeFile(path.join(f.a, "tracked.txt"), "dirty\n");
     await fs.writeFile(path.join(f.a, "untracked.txt"), "source only\n");
     const before = await git(f.a, "status", "--porcelain");
-    const wt = await f.nav.createWorktree({ branch: "feature/test", path: ".claude/worktree/exact name" });
+    const wt = await f.nav.createWorktree({
+      branch: "feature/test",
+      path: ".claude/worktree/exact name",
+    });
     expect(wt.path).toBe(path.join(f.a, ".claude/worktree/exact name"));
     expect(calls[0]?.clone).toBe(false);
     expect(calls[0]?.keepChanges).toBe(false);
     expect(await fs.readFile(path.join(wt.path, "tracked.txt"), "utf8")).toBe("original\n");
     expect(await git(wt.path, "status", "--porcelain")).toBe("");
     expect(await git(f.a, "status", "--porcelain")).toBe(before);
-    expect(await fs.readFile(path.join(f.a, ".git/info/exclude"), "utf8")).toContain("/.claude/worktree/exact\\ name/");
+    expect(await fs.readFile(path.join(f.a, ".git/info/exclude"), "utf8")).toContain(
+      "/.claude/worktree/exact\\ name/",
+    );
     f.move(wt.path);
     await fs.writeFile(path.join(wt.path, "tracked.txt"), "worktree commit\n");
     await git(wt.path, "add", "tracked.txt");
@@ -134,10 +207,13 @@ describe("worktree creation", () => {
     const second = await f.nav.createWorktree({ branch: "next", path: ".claude/worktree/second" });
     expect(second.path).toBe(path.join(f.a, ".claude/worktree/second"));
     expect(second.baseCommit).toBe(await git(wt.path, "rev-parse", "HEAD"));
-    expect(await fs.readFile(path.join(second.path, "tracked.txt"), "utf8")).toBe("worktree commit\n");
+    expect(await fs.readFile(path.join(second.path, "tracked.txt"), "utf8")).toBe(
+      "worktree commit\n",
+    );
     expect(await f.nav.validateExit()).toBe(f.a);
-    expect((await f.nav.listWorktrees()).map(entry => entry.path)).toContain(second.path);
-    const { cfgWorktreeBase, cfgWorktreeClone } = await runtime.importModule<any>("task/settings.ts");
+    expect((await f.nav.listWorktrees()).map((entry) => entry.path)).toContain(second.path);
+    const { cfgWorktreeBase, cfgWorktreeClone } =
+      await runtime.importModule<any>("task/settings.ts");
     const selectedBase = path.join(f.root, "selected-via-native-handle");
     cfgWorktreeBase.override(f.settings, selectedBase);
     cfgWorktreeClone.override(f.settings, false);
@@ -158,8 +234,12 @@ describe("worktree creation", () => {
     expect(await git(wt.path, "rev-parse", "HEAD")).toBe(initial);
     await f.nav.removeWorktree(wt.path);
     const destination = path.join(f.root, "managed", "recreated");
-    await expect(f.nav.createWorktree({ branch: "old", path: destination })).rejects.toThrow("Branch already exists");
-    await expect(f.nav.createWorktree({ branch: "old", path: destination, ref: "HEAD" })).rejects.toThrow("Branch already exists");
+    await expect(f.nav.createWorktree({ branch: "old", path: destination })).rejects.toThrow(
+      "Branch already exists",
+    );
+    await expect(
+      f.nav.createWorktree({ branch: "old", path: destination, ref: "HEAD" }),
+    ).rejects.toThrow("Branch already exists");
     expect(await git(f.a, "rev-parse", "refs/heads/old")).toBe(initial);
     expect(await fs.stat(destination).catch(() => undefined)).toBeUndefined();
   });
@@ -173,15 +253,32 @@ describe("worktree creation", () => {
     await fs.symlink(f.b, link);
     const dangling = path.join(f.a, "dangling");
     await fs.symlink(path.join(f.root, "absent"), dangling);
-    for (const location of [occupied, f.a, path.join(f.a, ".git/wt"), path.join(link, "wt"), path.join(dangling, "wt"), f.b]) {
+    for (const location of [
+      occupied,
+      f.a,
+      path.join(f.a, ".git/wt"),
+      path.join(link, "wt"),
+      path.join(dangling, "wt"),
+      f.b,
+    ]) {
       await expect(f.nav.createWorktree({ branch: "reject", path: location })).rejects.toThrow();
       expect(await git(f.a, "branch", "--list", "reject")).toBe("");
     }
-    await expect(f.nav.createWorktree({ branch: "bad-ref", path: ".claude/worktree/missing", ref: "no-such-ref" })).rejects.toThrow();
+    await expect(
+      f.nav.createWorktree({
+        branch: "bad-ref",
+        path: ".claude/worktree/missing",
+        ref: "no-such-ref",
+      }),
+    ).rejects.toThrow();
     expect(await fs.readFile(path.join(occupied, "keep.txt"), "utf8")).toBe("keep");
     const wt = await f.nav.createWorktree({ branch: "first", path: ".claude/worktree/first" });
-    await expect(f.nav.createWorktree({ branch: "inside", path: path.join(wt.path, "nested") })).rejects.toThrow("overlaps");
-    await expect(f.nav.createWorktree({ branch: "registered", path: wt.path })).rejects.toThrow("overlaps");
+    await expect(
+      f.nav.createWorktree({ branch: "inside", path: path.join(wt.path, "nested") }),
+    ).rejects.toThrow("overlaps");
+    await expect(f.nav.createWorktree({ branch: "registered", path: wt.path })).rejects.toThrow(
+      "overlaps",
+    );
   });
 
   test("pre-existing empty directory is accepted and its path is exact", async () => {
@@ -199,14 +296,19 @@ describe("worktree creation", () => {
     const f = await fixture();
     const { homedir } = await import("node:os");
     const exact = path.join(f.root, "managed", "tilde");
-    const wt = await f.nav.createWorktree({ branch: "tilde", path: `~/${path.relative(homedir(), exact)}` });
+    const wt = await f.nav.createWorktree({
+      branch: "tilde",
+      path: `~/${path.relative(homedir(), exact)}`,
+    });
     expect(wt.path).toBe(exact);
     const external = path.join(f.root, "external-exclude");
     await fs.writeFile(external, "keep\n");
     const local = path.join(f.a, ".git/info/exclude");
     await fs.unlink(local);
     await fs.symlink(external, local);
-    await expect(f.nav.createWorktree({ branch: "exclude-link", path: ".claude/worktree/exclude-link" })).rejects.toThrow("regular file");
+    await expect(
+      f.nav.createWorktree({ branch: "exclude-link", path: ".claude/worktree/exclude-link" }),
+    ).rejects.toThrow("regular file");
     expect(await fs.readFile(external, "utf8")).toBe("keep\n");
     expect(await git(f.a, "branch", "--list", "exclude-link")).toBe("");
   });
@@ -214,57 +316,100 @@ describe("worktree creation", () => {
   test("creation failure rolls back only its unchanged worktree and preserves concurrent exclude edits", async () => {
     let failAfterCreate = true;
     let appendForeignExclude = false;
-    const instrumented: NavigationRuntime = { async importModule<T>(specifier: string): Promise<T> {
-      const module = await runtime.importModule<any>(specifier);
-      if (specifier !== "@oh-my-pi/pi-natives/vcs") return module;
-      return { ...module, git(cwd: string) {
-        const repo = module.git(cwd);
-        return repo ? new Proxy(repo, { get(target, key) {
-          if (key === "worktreeAdd") return async (location: string, ref: string, options: Record<string, unknown>) => {
-            if (failAfterCreate) await target.worktreeAdd(location, ref, options);
-            if (appendForeignExclude) await fs.appendFile(path.join(target.info().commonDir, "info", "exclude"), "/foreign-entry/\n");
-            throw new Error("injected backend failure");
-          };
-          const value = Reflect.get(target, key);
-          return typeof value === "function" ? value.bind(target) : value;
-        } }) : null;
-      } } as T;
-    } };
+    const instrumented: NavigationRuntime = {
+      async importModule<T>(specifier: string): Promise<T> {
+        const module = await runtime.importModule<any>(specifier);
+        if (specifier !== "@oh-my-pi/pi-natives/vcs") return module;
+        return {
+          ...module,
+          git(cwd: string) {
+            const repo = module.git(cwd);
+            return repo
+              ? new Proxy(repo, {
+                  get(target, key) {
+                    if (key === "worktreeAdd")
+                      return async (
+                        location: string,
+                        ref: string,
+                        options: Record<string, unknown>,
+                      ) => {
+                        if (failAfterCreate) await target.worktreeAdd(location, ref, options);
+                        if (appendForeignExclude)
+                          await fs.appendFile(
+                            path.join(target.info().commonDir, "info", "exclude"),
+                            "/foreign-entry/\n",
+                          );
+                        throw new Error("injected backend failure");
+                      };
+                    const value = Reflect.get(target, key);
+                    return typeof value === "function" ? value.bind(target) : value;
+                  },
+                })
+              : null;
+          },
+        } as T;
+      },
+    };
     const f = await fixture(instrumented);
     const exclude = path.join(f.a, ".git/info/exclude");
     const original = await fs.readFile(exclude, "utf8");
-    await expect(f.nav.createWorktree({ branch: "rollback", path: ".claude/worktree/rollback" })).rejects.toThrow(/injected backend failure.*retained harmless exact ignore rule/);
+    await expect(
+      f.nav.createWorktree({ branch: "rollback", path: ".claude/worktree/rollback" }),
+    ).rejects.toThrow(/injected backend failure.*retained harmless exact ignore rule/);
     expect(await git(f.a, "branch", "--list", "rollback")).toBe("");
-    expect(await fs.readFile(exclude, "utf8")).toBe(original + "\n/.claude/worktree/rollback/\n");
-    expect(await fs.stat(path.join(f.a, ".claude/worktree/rollback")).catch(() => undefined)).toBeUndefined();
+    expect(await fs.readFile(exclude, "utf8")).toBe(`${original}\n/.claude/worktree/rollback/\n`);
+    expect(
+      await fs.stat(path.join(f.a, ".claude/worktree/rollback")).catch(() => undefined),
+    ).toBeUndefined();
     expect((await f.nav.listWorktrees()).length).toBe(1);
     failAfterCreate = false;
     appendForeignExclude = true;
-    await expect(f.nav.createWorktree({ branch: "concurrent", path: ".claude/worktree/concurrent" })).rejects.toThrow("injected backend failure");
+    await expect(
+      f.nav.createWorktree({ branch: "concurrent", path: ".claude/worktree/concurrent" }),
+    ).rejects.toThrow("injected backend failure");
     expect(await fs.readFile(exclude, "utf8")).toContain("/foreign-entry/\n");
     expect(await git(f.a, "branch", "--list", "concurrent")).toBe("");
   });
 
   test("failure retains a worktree changed during creation and the branch that protects it", async () => {
-    const instrumented: NavigationRuntime = { async importModule<T>(specifier: string): Promise<T> {
-      const module = await runtime.importModule<any>(specifier);
-      if (specifier !== "@oh-my-pi/pi-natives/vcs") return module;
-      return { ...module, git(cwd: string) {
-        const repo = module.git(cwd);
-        return repo ? new Proxy(repo, { get(target, key) {
-          if (key === "worktreeAdd") return async (location: string, ref: string, options: Record<string, unknown>) => {
-            await target.worktreeAdd(location, ref, options);
-            await fs.writeFile(path.join(location, "someone-elses-file.txt"), "preserve");
-            throw new Error("injected failure after foreign edit");
-          };
-          const value = Reflect.get(target, key);
-          return typeof value === "function" ? value.bind(target) : value;
-        } }) : null;
-      } } as T;
-    } };
+    const instrumented: NavigationRuntime = {
+      async importModule<T>(specifier: string): Promise<T> {
+        const module = await runtime.importModule<any>(specifier);
+        if (specifier !== "@oh-my-pi/pi-natives/vcs") return module;
+        return {
+          ...module,
+          git(cwd: string) {
+            const repo = module.git(cwd);
+            return repo
+              ? new Proxy(repo, {
+                  get(target, key) {
+                    if (key === "worktreeAdd")
+                      return async (
+                        location: string,
+                        ref: string,
+                        options: Record<string, unknown>,
+                      ) => {
+                        await target.worktreeAdd(location, ref, options);
+                        await fs.writeFile(
+                          path.join(location, "someone-elses-file.txt"),
+                          "preserve",
+                        );
+                        throw new Error("injected failure after foreign edit");
+                      };
+                    const value = Reflect.get(target, key);
+                    return typeof value === "function" ? value.bind(target) : value;
+                  },
+                })
+              : null;
+          },
+        } as T;
+      },
+    };
     const f = await fixture(instrumented);
     const target = path.join(f.a, ".claude/worktree/retained");
-    await expect(f.nav.createWorktree({ branch: "retained", path: target })).rejects.toThrow("retained destination");
+    await expect(f.nav.createWorktree({ branch: "retained", path: target })).rejects.toThrow(
+      "retained destination",
+    );
     expect(await fs.readFile(path.join(target, "someone-elses-file.txt"), "utf8")).toBe("preserve");
     expect(await git(f.a, "branch", "--list", "retained")).toContain("retained");
     expect((await f.nav.listWorktrees()).length).toBe(2);
@@ -278,7 +423,9 @@ describe("worktree creation", () => {
     const wt = await f.nav.createWorktree({ branch: "cloned" });
     expect(await git(wt.path, "status", "--porcelain")).toBe("");
     expect(await fs.readFile(path.join(wt.path, "tracked.txt"), "utf8")).toBe("original\n");
-    expect(await fs.stat(path.join(wt.path, "source-untracked.txt")).catch(() => undefined)).toBeUndefined();
+    expect(
+      await fs.stat(path.join(wt.path, "source-untracked.txt")).catch(() => undefined),
+    ).toBeUndefined();
     expect(await git(f.a, "status", "--porcelain")).toBe(before);
   });
 });
@@ -298,13 +445,17 @@ describe("safe worktree removal", () => {
     await expect(f.nav.removeWorktree(wt.path)).rejects.toThrow("clean");
     await git(wt.path, "restore", "tracked.txt");
     await fs.writeFile(path.join(wt.path, "untracked"), "keep");
-    expect((await f.nav.listWorktrees()).find(entry => entry.path === wt.path)?.untracked).toBe(true);
+    expect((await f.nav.listWorktrees()).find((entry) => entry.path === wt.path)?.untracked).toBe(
+      true,
+    );
     await expect(f.nav.removeWorktree(wt.path)).rejects.toThrow("clean");
     await fs.unlink(path.join(wt.path, "untracked"));
     const vcs = await runtime.importModule<any>("@oh-my-pi/pi-natives/vcs");
     const locked = path.join(vcs.git(wt.path).info().gitDir, "locked");
     await fs.writeFile(locked, "test lock");
-    expect((await f.nav.listWorktrees()).find(entry => entry.path === wt.path)?.locked).toBe(true);
+    expect((await f.nav.listWorktrees()).find((entry) => entry.path === wt.path)?.locked).toBe(
+      true,
+    );
     await expect(f.nav.removeWorktree(wt.path)).rejects.toThrow("unlocked");
     await fs.unlink(locked);
     await git(wt.path, "checkout", "--detach");
@@ -314,7 +465,7 @@ describe("safe worktree removal", () => {
     expect(removed.branch).toBe("remove");
     expect(await git(f.a, "branch", "--list", "remove")).toContain("remove");
     expect(await fs.stat(path.dirname(wt.path))).toBeDefined();
-    expect((await f.nav.listWorktrees()).some(entry => entry.path === wt.path)).toBe(false);
+    expect((await f.nav.listWorktrees()).some((entry) => entry.path === wt.path)).toBe(false);
   });
 
   test("enter accepts only registered worktrees of the current project", async () => {
