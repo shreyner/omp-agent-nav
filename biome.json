@@ -29,21 +29,38 @@
         "noUnusedVariables": "warn"
       },
       "performance": {
-        "noNamespaceImport": "off"
+        "noNamespaceImport": "off",
+        "noReExportAll": "error"
       },
       "style": {
         "noCommonJs": "error",
         "noNonNullAssertion": "off",
+        "noParameterAssign": "error",
+        "useAsConstAssertion": "error",
+        "useBlockStatements": "error",
+        "useConsistentArrayType": "error",
+        "useConsistentTypeDefinitions": "error",
         "useImportType": {
           "level": "error",
           "options": {
             "style": "inlineType"
           }
         },
-        "useNodejsImportProtocol": "error"
+        "useNodejsImportProtocol": "error",
+        "useShorthandFunctionType": "error"
       },
       "suspicious": {
         "noExplicitAny": "off"
+      },
+      "complexity": {
+        "noExcessiveCognitiveComplexity": {
+          "level": "error",
+          "options": {
+            "maxAllowedComplexity": 15
+          }
+        },
+        "noUselessTernary": "error",
+        "useArrowFunction": "error"
       },
       "nursery": {
         "noFloatingPromises": "error"
@@ -57,6 +74,9 @@
         "rules": {
           "nursery": {
             "noFloatingPromises": "off"
+          },
+          "complexity": {
+            "noExcessiveCognitiveComplexity": "off"
           }
         }
       }
@@ -71,7 +91,8 @@
           "options": {
             "groups": [[":BUN:", ":NODE:"], ":BLANK_LINE:"]
           }
-        }
+        },
+        "useSortedInterfaceMembers": "on"
       }
     }
   }

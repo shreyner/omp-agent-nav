@@ -56,7 +56,9 @@ afterEach(async () => {
     await memory.close(session);
     AgentRegistry.global().unregister(session.sessionId);
   }
-  for (const dir of temporary.splice(0)) await fs.rm(dir, { recursive: true, force: true });
+  for (const dir of temporary.splice(0)) {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
 
 async function root() {

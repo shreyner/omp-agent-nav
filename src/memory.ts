@@ -10,33 +10,36 @@ interface NativeSettings extends SettingsLike {
   overlay(values: Record<string, unknown>): NativeSettings;
 }
 interface MemorySession extends SessionLike {
-  settings: NativeSettings;
-  modelRegistry: unknown;
-  isDisposed?: boolean;
-  prompt(text: string, options?: unknown): Promise<unknown>;
   getMnemopiSessionState?(): MemoryState | undefined;
+  isDisposed?: boolean;
+  modelRegistry: unknown;
+  prompt(text: string, options?: unknown): Promise<unknown>;
+  settings: NativeSettings;
 }
-type MemoryBackend = { start(options: StartOptions): Promise<void>; [key: string]: unknown };
+interface MemoryBackend {
+  start(options: StartOptions): Promise<void>;
+  [key: string]: unknown;
+}
 interface MemoryState {
-  config: { bank: string; autoRetain: boolean; [key: string]: unknown };
   aliasOf?: MemoryState;
+  config: { bank: string; autoRetain: boolean; [key: string]: unknown };
   dispose(options?: { retain?: boolean; consolidate?: boolean }): Promise<void>;
-  getScopedRetainTarget(): { memory: { beam: { db: { filename: string } } } };
   getScopedRecallTargets(): Array<{ memory: { beam: { db: { filename: string } } } }>;
+  getScopedRetainTarget(): { memory: { beam: { db: { filename: string } } } };
   globalMemory?: { beam: { db: { filename: string } } };
 }
 interface StartOptions {
-  session: MemorySession;
-  settings: NativeSettings;
   agentDir: string;
   modelRegistry: unknown;
-  taskDepth: number;
   parentMnemopiSessionState?: MemoryState;
+  session: MemorySession;
+  settings: NativeSettings;
+  taskDepth: number;
 }
 
 export interface MemoryBridge {
-  ensure(session: SessionLike, sourceCwd?: string): Promise<void>;
   close(session: SessionLike): Promise<void>;
+  ensure(session: SessionLike, sourceCwd?: string): Promise<void>;
   getState(session: SessionLike): MemoryState | undefined;
 }
 
@@ -85,7 +88,9 @@ export async function installMemoryBridge(runtime: RuntimeModules): Promise<Memo
     }>("config/registry.ts"),
   ]);
   const existing = installed.get(mnemopiBackend);
-  if (existing) return existing;
+  if (existing) {
+    return existing;
+  }
   const originalStart = mnemopiBackend.start.bind(mnemopiBackend);
   const [{ resolveMemoryBackend }, { Settings }] = await Promise.all([
     runtime.importModule<{
@@ -129,10 +134,14 @@ export async function installMemoryBridge(runtime: RuntimeModules): Promise<Memo
       if ((session as MemorySession).getMnemopiSessionState?.() !== current) {
         throw new Error("Mnemopi native state slot no longer agrees with the session getter.");
       }
-      if (state) (session as unknown as Record<symbol, unknown>)[nativeSlot] = state;
-      else delete (session as unknown as Record<symbol, unknown>)[nativeSlot];
-      if ((session as MemorySession).getMnemopiSessionState?.() !== state)
+      if (state) {
+        (session as unknown as Record<symbol, unknown>)[nativeSlot] = state;
+      } else {
+        delete (session as unknown as Record<symbol, unknown>)[nativeSlot];
+      }
+      if ((session as MemorySession).getMnemopiSessionState?.() !== state) {
         throw new Error("Mnemopi state publication failed.");
+      }
     }
     return stateModule.setMnemopiSessionState(session, state);
   };
@@ -156,8 +165,12 @@ export async function installMemoryBridge(runtime: RuntimeModules): Promise<Memo
     return new Proxy(settings, {
       get(target, property) {
         // Derived.slot is module-local: source handles must never address the host's cache.
-        if (!sharesClient && property === "valueCache") return cache;
-        if (property === "getCwd" && bankPath) return () => bankPath;
+        if (!sharesClient && property === "valueCache") {
+          return cache;
+        }
+        if (property === "getCwd" && bankPath) {
+          return () => bankPath;
+        }
         const value = Reflect.get(target, property, target);
         return typeof value === "function" ? value.bind(target) : value;
       },
@@ -165,13 +178,16 @@ export async function installMemoryBridge(runtime: RuntimeModules): Promise<Memo
   }
 
   function librarySession(session: MemorySession): MemorySession {
-    if (sharesClient) return session;
+    if (sharesClient) {
+      return session;
+    }
     let proxy = librarySessions.get(session);
     if (!proxy) {
       proxy = new Proxy(session, {
         get(target, property) {
-          if (property === "settings")
+          if (property === "settings") {
             return librarySettingsForSession.get(target) ?? librarySettings(target.settings);
+          }
           const value = Reflect.get(target, property, target);
           return typeof value === "function" ? value.bind(target) : value;
         },
@@ -182,13 +198,19 @@ export async function installMemoryBridge(runtime: RuntimeModules): Promise<Memo
   }
 
   function libraryArgument(value: unknown): unknown {
-    if (!value || typeof value !== "object") return value;
+    if (!value || typeof value !== "object") {
+      return value;
+    }
     const object = value as Record<string, unknown>;
-    if (object.sessionManager && object.settings) return librarySession(value as MemorySession);
-    if (typeof object.rawValue === "function" && object.valueCache)
+    if (object.sessionManager && object.settings) {
+      return librarySession(value as MemorySession);
+    }
+    if (typeof object.rawValue === "function" && object.valueCache) {
       return librarySettings(value as NativeSettings);
-    if (object.session)
+    }
+    if (object.session) {
       return { ...object, session: librarySession(object.session as MemorySession) };
+    }
     return value;
   }
 
@@ -201,7 +223,9 @@ export async function installMemoryBridge(runtime: RuntimeModules): Promise<Memo
       await Promise.all(stateModule.getMnemopiScopedDbPaths(config).map(canonical)),
     );
     for (const [other, state] of activeStates) {
-      if (other === session) continue;
+      if (other === session) {
+        continue;
+      }
       const memories = [
         state.getScopedRetainTarget().memory,
         ...state.getScopedRecallTargets().map((target) => target.memory),
@@ -210,10 +234,11 @@ export async function installMemoryBridge(runtime: RuntimeModules): Promise<Memo
       const overlap = (
         await Promise.all(memories.map((memory) => canonical(memory.beam.db.filename)))
       ).some((path) => paths.has(path));
-      if (overlap)
+      if (overlap) {
         throw new Error(
           "Cannot clear Mnemopi while another session owns a database in the selected memory scope.",
         );
+      }
     }
   }
 
@@ -221,18 +246,29 @@ export async function installMemoryBridge(runtime: RuntimeModules): Promise<Memo
     if (!ownedDisposers.has(state)) {
       ownedDisposers.add(state);
       const dispose = state.dispose.bind(state);
+      const clearGlobalSlot = () => {
+        if (stateModule.getMnemopiSessionState(session) === state) {
+          stateModule.setMnemopiSessionState(session, undefined);
+        }
+      };
+      const clearNativeSlot = () => {
+        if (!(nativeSlot && session.getMnemopiSessionState?.() === state)) {
+          return;
+        }
+        if ((session as unknown as Record<symbol, unknown>)[nativeSlot] !== state) {
+          throw new Error("Mnemopi state ownership changed during disposal.");
+        }
+        delete (session as unknown as Record<symbol, unknown>)[nativeSlot];
+      };
       state.dispose = async (options) => {
         try {
-          if (stateModule.getMnemopiSessionState(session) === state)
-            stateModule.setMnemopiSessionState(session, undefined);
-          if (nativeSlot && session.getMnemopiSessionState?.() === state) {
-            if ((session as unknown as Record<symbol, unknown>)[nativeSlot] !== state)
-              throw new Error("Mnemopi state ownership changed during disposal.");
-            delete (session as unknown as Record<symbol, unknown>)[nativeSlot];
-          }
+          clearGlobalSlot();
+          clearNativeSlot();
           await dispose(options);
         } finally {
-          if (activeStates.get(session) === state) activeStates.delete(session);
+          if (activeStates.get(session) === state) {
+            activeStates.delete(session);
+          }
         }
       };
     }
@@ -247,7 +283,9 @@ export async function installMemoryBridge(runtime: RuntimeModules): Promise<Memo
   }
 
   function installGate(session: MemorySession): void {
-    if (hooked.has(session)) return;
+    if (hooked.has(session)) {
+      return;
+    }
     hooked.add(session);
     const detach = session.agent.addBeforeModelCallHook(() => bridge.ensure(session));
     session.addDisposer(detach);
@@ -311,13 +349,17 @@ export async function installMemoryBridge(runtime: RuntimeModules): Promise<Memo
   function launch(options: StartOptions, sourceCwd?: string): Promise<void> {
     installGate(options.session);
     const running = pending.get(options.session);
-    if (running) return running;
+    if (running) {
+      return running;
+    }
     const promise = withDatabaseTransition(() => startOwned(options, sourceCwd))
       .catch((error) => {
         failures.set(options.session, error instanceof Error ? error : new Error(String(error)));
       })
       .finally(() => {
-        if (pending.get(options.session) === promise) pending.delete(options.session);
+        if (pending.get(options.session) === promise) {
+          pending.delete(options.session);
+        }
       });
     pending.set(options.session, promise);
     return promise;
@@ -327,16 +369,24 @@ export async function installMemoryBridge(runtime: RuntimeModules): Promise<Memo
     async ensure(sessionLike, sourceCwd) {
       const session = sessionLike as MemorySession;
       installGate(session);
-      if (read(session.settings, "memory.backend") !== "mnemopi") return;
+      if (read(session.settings, "memory.backend") !== "mnemopi") {
+        return;
+      }
       const running = pending.get(session);
-      if (running) await running;
+      if (running) {
+        await running;
+      }
       const error = failures.get(session);
-      if (error) throw error;
+      if (error) {
+        throw error;
+      }
       const identity = await resolveProjectIdentity(
         runtime,
         sourceCwd ?? session.settings.getCwd(),
       );
-      if (getState(session) && targets.get(session) === identity.bankPath) return;
+      if (getState(session) && targets.get(session) === identity.bankPath) {
+        return;
+      }
       await launch(
         {
           session,
@@ -348,7 +398,9 @@ export async function installMemoryBridge(runtime: RuntimeModules): Promise<Memo
         sourceCwd,
       );
       const failure = failures.get(session);
-      if (failure) throw failure;
+      if (failure) {
+        throw failure;
+      }
     },
     async close(session) {
       await pending.get(session);
@@ -364,19 +416,34 @@ export async function installMemoryBridge(runtime: RuntimeModules): Promise<Memo
   nativeBackend.start = (options) => launch(options);
   // Native tools use the same owned library; native disposal only terminates its unused client.
   for (const [name, operation] of Object.entries(mnemopiBackend)) {
-    if (name === "start" || typeof operation !== "function") continue;
-    if (sharesClient && name !== "clear") continue;
+    if (name === "start" || typeof operation !== "function") {
+      continue;
+    }
+    if (sharesClient && name !== "clear") {
+      continue;
+    }
     nativeBackend[name] = async (...args: unknown[]) => {
-      const run = async () => {
-        if (name === "clear" && args[2])
-          await assertClearOwnership(args[2] as MemorySession, args[0] as string);
-        const result = await operation.apply(mnemopiBackend, args.map(libraryArgument));
+      const assertClearAllowed = async () => {
         if (name === "clear" && args[2]) {
-          const session = args[2] as MemorySession;
-          const state = stateModule.getMnemopiSessionState(session);
-          if (state) publishOwnedState(session, state);
-          else setState(session, undefined);
+          await assertClearOwnership(args[2] as MemorySession, args[0] as string);
         }
+      };
+      const publishClearState = () => {
+        if (name !== "clear" || !args[2]) {
+          return;
+        }
+        const session = args[2] as MemorySession;
+        const state = stateModule.getMnemopiSessionState(session);
+        if (state) {
+          publishOwnedState(session, state);
+        } else {
+          setState(session, undefined);
+        }
+      };
+      const run = async () => {
+        await assertClearAllowed();
+        const result = await operation.apply(mnemopiBackend, args.map(libraryArgument));
+        publishClearState();
         return result;
       };
       return name === "clear" ? await withDatabaseTransition(run) : await run();
@@ -389,10 +456,13 @@ export async function installMemoryBridge(runtime: RuntimeModules): Promise<Memo
   };
   const terminate = embedModule.mnemopiEmbedClient.terminate.bind(embedModule.mnemopiEmbedClient);
   let stopping = false;
-  if (sharesClient)
+  if (sharesClient) {
     embedModule.mnemopiEmbedClient.terminate = async () => {
-      if (stopping) await terminate();
+      if (stopping) {
+        await terminate();
+      }
     };
+  }
   utils.postmortem.register("omp-agent-nav-embedding", async () => {
     stopping = true;
     await terminate();
@@ -431,11 +501,15 @@ async function captureNativeStateSlot(
       taskDepth: 0,
     });
     state = prototype.getMnemopiSessionState?.call(probe);
-    if (!state) throw new Error("Cannot initialise the native Mnemopi state adapter.");
+    if (!state) {
+      throw new Error("Cannot initialise the native Mnemopi state adapter.");
+    }
     const slots = Object.getOwnPropertySymbols(probe).filter(
       (slot) => (probe as unknown as Record<symbol, unknown>)[slot] === state,
     );
-    if (slots.length !== 1) throw new Error("Native Mnemopi state ownership is ambiguous.");
+    if (slots.length !== 1) {
+      throw new Error("Native Mnemopi state ownership is ambiguous.");
+    }
     delete (probe as unknown as Record<symbol, unknown>)[slots[0]];
     return slots[0];
   } finally {
@@ -448,10 +522,14 @@ async function syncCustomMemoryProviders(
   runtime: RuntimeModules,
   modelRegistry: unknown,
 ): Promise<void> {
-  if (runtime.mode === "source-test") return;
+  if (runtime.mode === "source-test") {
+    return;
+  }
   const models =
     (modelRegistry as { getAll?(kind: string): Array<{ api: string }> }).getAll?.("all") ?? [];
-  if (!models.length) return;
+  if (!models.length) {
+    return;
+  }
   const [nativeRegistry, ownedRegistry, ai] = await Promise.all([
     runtime.importModule<{ getCustomApi(api: string): unknown }>("@oh-my-pi/pi-ai/api-registry"),
     runtime.importLibraryModule<{
@@ -460,11 +538,12 @@ async function syncCustomMemoryProviders(
     runtime.importModule<{ streamSimple(...args: unknown[]): unknown }>("@oh-my-pi/pi-ai"),
   ]);
   for (const api of new Set(models.map((model) => model.api))) {
-    if (nativeRegistry.getCustomApi(api))
+    if (nativeRegistry.getCustomApi(api)) {
       ownedRegistry.registerCustomApi(
         api,
         (...args) => ai.streamSimple(...args),
         "omp-agent-nav-memory",
       );
+    }
   }
 }

@@ -25,12 +25,16 @@ const { Settings } = await runtime.importModule<{
 }>("config/settings.ts");
 const temporary: string[] = [];
 afterEach(async () => {
-  while (temporary.length) await fs.rm(temporary.pop()!, { force: true, recursive: true });
+  while (temporary.length) {
+    await fs.rm(temporary.pop()!, { force: true, recursive: true });
+  }
 });
 async function git(cwd: string, ...args: string[]): Promise<void> {
   const child = Bun.spawn(["git", ...args], { cwd, stdout: "ignore", stderr: "pipe" });
   const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
-  if (code) throw new Error(stderr);
+  if (code) {
+    throw new Error(stderr);
+  }
 }
 
 test("native manager preserves accepted B across A/B/worktree and revokes it without trusting visited paths", async () => {
@@ -206,8 +210,9 @@ test("workspace_grant resolves a worktree to its primary, skips accepted roots, 
       () => undefined,
       (error) => error,
     );
-    if (!(failure instanceof NavigationError))
+    if (!(failure instanceof NavigationError)) {
       throw new Error("validateMove outside roots must fail with NavigationError");
+    }
     expect(failure.code).toBe("permission");
     expect(failure.suggestedGrants).toEqual([other]);
     expect(failure.message).toContain("workspace_grant");

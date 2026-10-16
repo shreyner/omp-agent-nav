@@ -84,24 +84,31 @@ const originalAgentDir = dirs.getAgentDir();
 const originalCwd = process.cwd();
 registerMockApi();
 interface NativeSession extends SessionLike {
-  prompt(text: string): Promise<unknown>;
   dispose(): Promise<void>;
   getToolByName(name: string): unknown;
+  prompt(text: string): Promise<unknown>;
 }
 const temporary: string[] = [];
 const sessions: NativeSession[] = [];
 const auths: Array<{ close(): Promise<void> }> = [];
 afterEach(async () => {
   for (const ref of runtime.host.AgentRegistry.global().list()) {
-    if (ref.session && !sessions.includes(ref.session as NativeSession))
+    if (ref.session && !sessions.includes(ref.session as NativeSession)) {
       await (ref.session as NativeSession).dispose();
+    }
   }
-  for (const session of sessions.splice(0)) await session.dispose();
-  for (const auth of auths.splice(0)) await auth.close();
+  for (const session of sessions.splice(0)) {
+    await session.dispose();
+  }
+  for (const auth of auths.splice(0)) {
+    await auth.close();
+  }
   AgentStorage.close();
   dirs.setAgentDir(originalAgentDir);
   dirs.setProjectDir(originalCwd);
-  for (const dir of temporary.splice(0)) await fs.rm(dir, { recursive: true, force: true });
+  for (const dir of temporary.splice(0)) {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
 
 async function fixture(persist = false, batch: boolean | null = true, defaultMemoryPath = false) {
@@ -111,7 +118,9 @@ async function fixture(persist = false, batch: boolean | null = true, defaultMem
   const b = join(root, "B");
   const c = join(root, "C");
   const agentDir = join(root, "agent");
-  for (const dir of [a, b, c, agentDir]) await fs.mkdir(dir);
+  for (const dir of [a, b, c, agentDir]) {
+    await fs.mkdir(dir);
+  }
   dirs.setAgentDir(agentDir);
   for (const [dir, marker] of [
     [a, "A"],
@@ -151,7 +160,9 @@ async function fixture(persist = false, batch: boolean | null = true, defaultMem
       `Command from project ${marker}.`,
     );
   }
-  if (batch === null) await fs.writeFile(join(a, ".omp", "config.yml"), "task:\n  batch: false\n");
+  if (batch === null) {
+    await fs.writeFile(join(a, ".omp", "config.yml"), "task:\n  batch: false\n");
+  }
   const settings = await Settings.loadIsolated({
     cwd: a,
     agentDir,
@@ -248,12 +259,16 @@ async function fixture(persist = false, batch: boolean | null = true, defaultMem
       tool = definition;
     },
     on: (event: string, handler: (typeof startHandlers)[number]) => {
-      if (event === "session_start") startHandlers.push(handler);
+      if (event === "session_start") {
+        startHandlers.push(handler);
+      }
     },
   } as ExtensionApiLike;
   await installTaskTool(pi, runtime, bridge, memory);
   const ctx = { agent: { id: "Main", kind: "main" } } as ExtensionContextLike;
-  for (const handler of startHandlers) await handler({ type: "session_start" }, ctx);
+  for (const handler of startHandlers) {
+    await handler({ type: "session_start" }, ctx);
+  }
   return { root, a, b, c, session, tool, mock, ctx, hooks };
 }
 
@@ -304,7 +319,9 @@ async function expectServerClosed(pidFile: string) {
       await Bun.sleep(25);
     }
   }
-  if (!pid) return;
+  if (!pid) {
+    return;
+  }
   expect(pid).toBeGreaterThan(0);
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
@@ -447,7 +464,9 @@ describe("native task destination scope", () => {
       `${anchor.slice(0, -6)}/${result.details.results[0].id}.jsonl`,
     );
     await f.session.moveSession(f.c);
-    for (const hook of f.hooks) await hook(f.session);
+    for (const hook of f.hooks) {
+      await hook(f.session);
+    }
     expect((native.getSessionFile as () => string)()).toBe(anchor);
     expect(await fs.realpath(anchor)).toContain("sessions");
     expect(await fs.stat(childRef!.sessionFile!)).toBeDefined();
@@ -502,7 +521,9 @@ describe("native task destination scope", () => {
       undefined,
       f.ctx,
     )) as { details: { results: Array<{ id: string; exitCode: number; error?: string }> } };
-    if (!result.details.results.length) throw new Error(JSON.stringify(result));
+    if (!result.details.results.length) {
+      throw new Error(JSON.stringify(result));
+    }
     expect(result.details.results[0].error).toBeUndefined();
     expect(result.details.results[0].exitCode).toBe(0);
     const child = runtime.host.AgentRegistry.global().get(result.details.results[0].id)!.session!;
@@ -549,7 +570,9 @@ describe("native task destination scope", () => {
     };
     const originalChildFile = child.sessionFile;
     await f.session.moveSession(f.c);
-    for (const hook of f.hooks) await hook(f.session);
+    for (const hook of f.hooks) {
+      await hook(f.session);
+    }
     finish.resolve();
     const result = (await execution) as { details: { results: Array<{ exitCode: number }> } };
     expect(result.details.results[0].exitCode).toBe(0);
@@ -685,8 +708,11 @@ describe("native task destination scope", () => {
     let maximum = 0;
     let childCalls = 0;
     f.mock.model.fallback = async (context: { systemPrompt: string[] }) => {
-      if (!context.systemPrompt.some((value) => /Destination [AB] agent instructions/.test(value)))
+      if (
+        !context.systemPrompt.some((value) => /Destination [AB] agent instructions/.test(value))
+      ) {
         return { content: ["main received result"] };
+      }
       active++;
       childCalls++;
       maximum = Math.max(maximum, active);
@@ -744,7 +770,9 @@ describe("native task destination scope", () => {
     const childA = runtime.host.AgentRegistry.global().get("default-A")!.session!;
     const bankA = memory.getState(childA)!.config.bank;
     await f.session.moveSession(f.c);
-    for (const hook of f.hooks) await hook(f.session);
+    for (const hook of f.hooks) {
+      await hook(f.session);
+    }
     expect(childA.sessionManager.getCwd()).toBe(f.a);
     expect(memory.getState(childA)!.config.bank).toBe(bankA);
     const second = (await f.tool.execute(
@@ -805,7 +833,9 @@ describe("native task destination scope", () => {
     const oldBank = memory.getState(childRef.session)!.config.bank;
     const main = f.session as NativeSession & { newSession(): Promise<boolean> };
     expect(await main.newSession()).toBe(true);
-    for (const hook of f.hooks) await hook(f.session);
+    for (const hook of f.hooks) {
+      await hook(f.session);
+    }
     expect(f.session.sessionId).not.toBe(oldId);
     expect((native.getSessionFile as () => string)()).not.toBe(oldAnchor);
     expect(await fs.realpath(oldAnchor)).toBe(oldActualFile);
@@ -830,7 +860,9 @@ describe("native task destination scope", () => {
     const bridge = new WorkspaceBridge(runtime);
     bridge.setMemoryBridge(memory);
     await bridge.relocate(f.session, f.b);
-    for (const hook of f.hooks) await hook(f.session);
+    for (const hook of f.hooks) {
+      await hook(f.session);
+    }
     expect(shape().tasks).toBeDefined();
     expect(f.tool.description).toContain("Destination agent B");
     expect(f.tool.description).not.toContain("Destination agent A");

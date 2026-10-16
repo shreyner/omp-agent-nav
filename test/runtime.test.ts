@@ -13,7 +13,9 @@ import { type HostNamespace } from "../src/types";
 
 const temporary: string[] = [];
 afterEach(async () => {
-  while (temporary.length) await fs.rm(temporary.pop()!, { force: true, recursive: true });
+  while (temporary.length) {
+    await fs.rm(temporary.pop()!, { force: true, recursive: true });
+  }
 });
 
 test("discovers the installed npm package and imports its native/source modules without copies", async () => {
@@ -54,7 +56,9 @@ test("ordinary installed CLI passes its version smoke check", async () => {
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
   ]);
-  if (code) throw new Error(`Configured extension fixture failed: ${stderr}`);
+  if (code) {
+    throw new Error(`Configured extension fixture failed: ${stderr}`);
+  }
   expect(code).toBe(0);
   expect(SUPPORTED_OMP_VERSIONS.some((version) => stdout.trim().endsWith(version))).toBe(true);
   expect(stderr).toBe("");
@@ -197,8 +201,9 @@ export default async function(pi) {
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
   ]);
-  if (code || !(await fs.exists(report)))
+  if (code || !(await fs.exists(report))) {
     throw new Error(`Configured extension fixture failed: ${stderr}`);
+  }
   expect(code).toBe(0);
   expect(stderr).not.toContain("Failed to load extension");
   expect(stdout).not.toContain("FAKE_PROVIDER_FALLBACK");
@@ -255,8 +260,9 @@ export default async function(pi) {
     new Response(explicit.stderr).text(),
     new Response(explicit.stdout).text(),
   ]);
-  if (explicitCode)
+  if (explicitCode) {
     throw new Error(`Explicit prompt configured extension fixture failed: ${explicitStderr}`);
+  }
   const explicitResult = JSON.parse(await fs.readFile(report, "utf8"));
   for (const prompt of [
     explicitResult.after.prompt,
@@ -283,7 +289,9 @@ export default async function(pi) {
     new Response(initialDefault.stderr).text(),
     new Response(initialDefault.stdout).text(),
   ]);
-  if (defaultCode) throw new Error(`Initial default configured fixture failed: ${defaultStderr}`);
+  if (defaultCode) {
+    throw new Error(`Initial default configured fixture failed: ${defaultStderr}`);
+  }
   const initialDefaultResult = JSON.parse(await fs.readFile(report, "utf8"));
   expect(initialDefaultResult.after.prompt[0]).toContain("SYSTEM_B_UNIQUE");
   expect(initialDefaultResult.returned.prompt[0]).not.toContain("SYSTEM_B_UNIQUE");
@@ -310,7 +318,9 @@ test("configured package extension creates managed and exact worktrees through h
       new Response(child.stdout).text(),
       new Response(child.stderr).text(),
     ]);
-    if (code) throw new Error(`Fixture git failed: ${stderr}`);
+    if (code) {
+      throw new Error(`Fixture git failed: ${stderr}`);
+    }
     return stdout;
   };
   await git("init", "-b", "main");
@@ -407,8 +417,9 @@ export default function(pi) {
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
   ]);
-  if (code || !(await fs.exists(report)))
+  if (code || !(await fs.exists(report))) {
     throw new Error(`Configured worktree fixture failed: ${stderr}\n${stdout}`);
+  }
   expect(stderr).not.toContain("Failed to load extension");
   const result = JSON.parse(await fs.readFile(report, "utf8"));
   expect(Object.values(result.identities).every((value) => value === true)).toBe(true);

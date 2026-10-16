@@ -12,14 +12,14 @@ const { Settings } = await runtime.importModule<{
   Settings: { isolated(values?: Record<string, unknown>): SettingsLike };
 }>("config/settings.ts");
 interface FixtureTool {
-  name: string;
   description: string;
+  name: string;
 }
 interface FixtureManager {
   cwd: string;
-  getTools(): FixtureTool[];
-  discoverAndConnect(options: Record<string, unknown>): Promise<unknown>;
   disconnectAll(): Promise<void>;
+  discoverAndConnect(options: Record<string, unknown>): Promise<unknown>;
+  getTools(): FixtureTool[];
 }
 const { MCPManager } = await runtime.importModule<{
   MCPManager: new (
@@ -31,8 +31,12 @@ const { MCPManager } = await runtime.importModule<{
 const temporary: string[] = [];
 const managers: FixtureManager[] = [];
 afterEach(async () => {
-  for (const manager of managers.splice(0)) await manager.disconnectAll();
-  while (temporary.length) await fs.rm(temporary.pop()!, { recursive: true, force: true });
+  for (const manager of managers.splice(0)) {
+    await manager.disconnectAll();
+  }
+  while (temporary.length) {
+    await fs.rm(temporary.pop()!, { recursive: true, force: true });
+  }
 });
 
 test("reads real native Settings through registry handles", async () => {
@@ -70,7 +74,7 @@ for await (const line of createInterface({ input: process.stdin })) {
   for (const [cwd, scope] of [
     [a, "A"],
     [b, "B"],
-  ])
+  ]) {
     await fs.writeFile(
       join(cwd, ".mcp.json"),
       JSON.stringify({
@@ -84,6 +88,7 @@ for await (const line of createInterface({ input: process.stdin })) {
         },
       }),
     );
+  }
   const loadedPaths: string[] = [];
   const manager = new MCPManager(a, null, async (cwd, options) => {
     loadedPaths.push(cwd);

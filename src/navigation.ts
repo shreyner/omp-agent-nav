@@ -9,36 +9,36 @@ export interface NavigationRuntime {
 }
 
 interface GitInfo {
-  repoRoot: string;
-  gitEntryPath: string;
-  gitDir: string;
   commonDir: string;
+  gitDir: string;
+  gitEntryPath: string;
+  repoRoot: string;
 }
 
 interface NativeWorktree {
-  path: string;
-  head?: string;
   branch?: string;
   detached: boolean;
+  head?: string;
+  path: string;
 }
 
 interface GitRepository {
-  info(): GitInfo;
-  primaryRoot(): string;
-  linkedWorktree(): { root: string; primaryRoot: string } | null;
-  worktrees(): Promise<NativeWorktree[]>;
-  statusPorcelain(options: { untracked: string; nulTerminated?: boolean }): Promise<string>;
-  currentBranch(): Promise<string | null | undefined>;
-  resolveRef(ref: string): Promise<string | null | undefined>;
-  refExists(ref: string): Promise<boolean>;
   createBranch(branch: string, ref: string, force: boolean): Promise<unknown>;
+  currentBranch(): Promise<string | null | undefined>;
   deleteBranch(branch: string, force: boolean): Promise<boolean>;
+  info(): GitInfo;
+  linkedWorktree(): { root: string; primaryRoot: string } | null;
+  primaryRoot(): string;
+  refExists(ref: string): Promise<boolean>;
+  resolveRef(ref: string): Promise<string | null | undefined>;
+  statusPorcelain(options: { untracked: string; nulTerminated?: boolean }): Promise<string>;
   worktreeAdd(
     target: string,
     ref: string,
     options: { detach: boolean; clone: boolean; backend?: unknown; keepChanges: boolean },
   ): Promise<{ clonedWith?: unknown; cloneError?: string }>;
   worktreeRemove(target: string, force: boolean): Promise<boolean>;
+  worktrees(): Promise<NativeWorktree[]>;
 }
 
 interface NativeVcs {
@@ -47,33 +47,33 @@ interface NativeVcs {
 }
 
 export interface ProjectIdentity {
-  cwd: string;
-  root: string;
-  mainRoot: string;
-  commonDir?: string;
-  isWorktree: boolean;
   bankPath: string;
+  commonDir?: string;
+  cwd: string;
+  isWorktree: boolean;
+  mainRoot: string;
+  root: string;
 }
 
 export interface NavigationOptions {
-  initialCwd: string;
   getCwd(): string;
-  getWorkspaceRoots(): readonly string[];
-  getSettings(): { flush?(): Promise<void> };
   getLiveAgentCwds(): readonly string[];
+  getSettings(): { flush?(): Promise<void> };
+  getWorkspaceRoots(): readonly string[];
+  initialCwd: string;
 }
 
 export interface WorktreeState {
+  available: boolean;
+  branch?: string;
+  detached: boolean;
+  dirty: boolean | null;
+  head?: string;
+  inUse: boolean;
+  locked: boolean;
   path: string;
   primary: boolean;
-  branch?: string;
-  head?: string;
-  detached: boolean;
-  locked: boolean;
-  dirty: boolean | null;
   untracked: boolean | null;
-  inUse: boolean;
-  available: boolean;
 }
 
 export class NavigationError extends Error {
@@ -96,12 +96,18 @@ export function pathIsWithin(root: string, target: string): boolean {
 }
 
 export function expandPath(input: string, base: string): string {
-  if (typeof input !== "string" || !input.trim() || input.includes("\0"))
+  if (typeof input !== "string" || !input.trim() || input.includes("\0")) {
     throw new NavigationError("invalid", "A non-empty path is required.");
-  if (input === "~") return homedir();
-  if (input.startsWith("~/")) return path.resolve(homedir(), input.slice(2));
-  if (input.startsWith("~"))
+  }
+  if (input === "~") {
+    return homedir();
+  }
+  if (input.startsWith("~/")) {
+    return path.resolve(homedir(), input.slice(2));
+  }
+  if (input.startsWith("~")) {
     throw new NavigationError("invalid", "Only ~ and ~/ paths are supported.");
+  }
   return path.resolve(base, input);
 }
 
@@ -112,11 +118,14 @@ function notFound(error: unknown): boolean {
 async function existingDirectory(target: string): Promise<string> {
   try {
     const canonical = await fs.realpath(target);
-    if (!(await fs.stat(canonical)).isDirectory())
+    if (!(await fs.stat(canonical)).isDirectory()) {
       throw new NavigationError("unavailable", `Not a directory: ${target}`);
+    }
     return canonical;
   } catch (error) {
-    if (error instanceof NavigationError) throw error;
+    if (error instanceof NavigationError) {
+      throw error;
+    }
     throw new NavigationError("unavailable", `Cannot open directory ${target}: ${String(error)}`);
   }
 }
@@ -128,13 +137,18 @@ async function futureDirectory(target: string): Promise<string> {
   while (true) {
     try {
       const stat = await fs.lstat(ancestor);
-      if (!stat.isDirectory() && !stat.isSymbolicLink())
+      if (!stat.isDirectory() && !stat.isSymbolicLink()) {
         throw new NavigationError("conflict", `Not a directory: ${ancestor}`);
+      }
       return path.join(await existingDirectory(ancestor), ...suffix.reverse());
     } catch (error) {
-      if (!notFound(error)) throw error;
+      if (!notFound(error)) {
+        throw error;
+      }
       const parent = path.dirname(ancestor);
-      if (parent === ancestor) throw error;
+      if (parent === ancestor) {
+        throw error;
+      }
       suffix.push(path.basename(ancestor));
       ancestor = parent;
     }
@@ -148,16 +162,20 @@ export async function resolveProjectIdentity(
   const cwd = await existingDirectory(path.resolve(directory));
   const vcs = await runtime.importModule<NativeVcs>("@oh-my-pi/pi-natives/vcs");
   const repository = vcs.git(cwd);
-  if (!repository) return { cwd, root: cwd, mainRoot: cwd, isWorktree: false, bankPath: cwd };
+  if (!repository) {
+    return { cwd, root: cwd, mainRoot: cwd, isWorktree: false, bankPath: cwd };
+  }
   const root = await existingDirectory(repository.info().repoRoot);
   const mainRoot = await existingDirectory(repository.primaryRoot());
   const commonDir = await fs.realpath(repository.info().commonDir);
   const primary = vcs.git(mainRoot);
-  if (!primary || (await fs.realpath(primary.info().commonDir)) !== commonDir)
+  if (!primary || (await fs.realpath(primary.info().commonDir)) !== commonDir) {
     throw new NavigationError("git", `Cannot verify primary checkout for ${cwd}`);
+  }
   const entries = await repository.worktrees();
-  if (!entries.some((entry) => path.resolve(entry.path) === root))
+  if (!entries.some((entry) => path.resolve(entry.path) === root)) {
     throw new NavigationError("git", `Checkout is absent from the Git worktree registry: ${root}`);
+  }
   const isWorktree = root !== mainRoot;
   return {
     cwd,
@@ -203,8 +221,12 @@ export class WorkspaceNavigation {
 
   async #authorize(target: string, identity?: ProjectIdentity): Promise<void> {
     const roots = await this.#roots();
-    if (roots.some((root) => pathIsWithin(root, target))) return;
-    if (identity?.isWorktree && roots.some((root) => pathIsWithin(root, identity.mainRoot))) return;
+    if (roots.some((root) => pathIsWithin(root, target))) {
+      return;
+    }
+    if (identity?.isWorktree && roots.some((root) => pathIsWithin(root, identity.mainRoot))) {
+      return;
+    }
     const grant = identity
       ? ` Call workspace_grant with dirs ${JSON.stringify([identity.mainRoot])} to accept this project root.`
       : "";
@@ -225,11 +247,14 @@ export class WorkspaceNavigation {
     const vcs = await this.#vcs;
     for (const root of new Set([this.options.getCwd(), ...(await this.#roots())])) {
       const info = vcs.git(root)?.info();
-      if (!info) continue;
+      if (!info) {
+        continue;
+      }
       for (const directory of [info.gitDir, info.commonDir]) {
         const metadata = await fs.realpath(directory);
-        if (pathIsWithin(metadata, target))
+        if (pathIsWithin(metadata, target)) {
           throw new NavigationError("permission", `Git metadata is not a workspace: ${target}`);
+        }
       }
     }
   }
@@ -238,13 +263,16 @@ export class WorkspaceNavigation {
     const identity = await resolveProjectIdentity(this.runtime, this.options.getCwd());
     await this.#authorize(identity.cwd, identity);
     const vcs = await this.#vcs;
-    if (vcs.isPureJj(identity.cwd))
+    if (vcs.isPureJj(identity.cwd)) {
       throw new NavigationError(
         "git",
         "Worktree operations require a Git checkout, not a pure Jujutsu workspace.",
       );
+    }
     const repository = vcs.git(identity.cwd);
-    if (!repository) throw new NavigationError("git", `Not inside a Git checkout: ${identity.cwd}`);
+    if (!repository) {
+      throw new NavigationError("git", `Not inside a Git checkout: ${identity.cwd}`);
+    }
     return { identity, repository };
   }
 
@@ -295,7 +323,9 @@ export class WorkspaceNavigation {
         (await fs.lstat(path.join(repository.info().gitDir, "locked")).then(
           () => true,
           (error) => {
-            if (notFound(error)) return false;
+            if (notFound(error)) {
+              return false;
+            }
             throw error;
           },
         )),
@@ -348,6 +378,23 @@ export class WorkspaceNavigation {
     );
   }
 
+  #invalidBranch(branch: string): boolean {
+    return (
+      typeof branch !== "string" ||
+      !branch ||
+      /[\s~^:?*[\\\0]/.test(branch) ||
+      branch.startsWith("-") ||
+      branch.endsWith("/") ||
+      branch.includes("..") ||
+      branch.includes("@{") ||
+      branch.split("/").some((part) => !part || part.startsWith(".") || part.endsWith(".lock"))
+    );
+  }
+
+  #invalidRef(ref: string | undefined): boolean {
+    return ref !== undefined && (typeof ref !== "string" || !ref.trim() || ref.includes("\0"));
+  }
+
   async createWorktree(request: { branch: string; path?: string; ref?: string }): Promise<{
     path: string;
     branch: string;
@@ -358,79 +405,21 @@ export class WorkspaceNavigation {
   }> {
     const { identity, repository } = await this.#currentProject();
     const branch = request.branch;
-    if (
-      typeof branch !== "string" ||
-      !branch ||
-      /[\s~^:?*[\\\0]/.test(branch) ||
-      branch.startsWith("-") ||
-      branch.endsWith("/") ||
-      branch.includes("..") ||
-      branch.includes("@{") ||
-      branch.split("/").some((part) => !part || part.startsWith(".") || part.endsWith(".lock"))
-    ) {
+    if (this.#invalidBranch(branch)) {
       throw new NavigationError("invalid", `Invalid branch name: ${String(branch)}`);
     }
-    if (
-      request.ref !== undefined &&
-      (typeof request.ref !== "string" || !request.ref.trim() || request.ref.includes("\0"))
-    )
+    if (this.#invalidRef(request.ref)) {
       throw new NavigationError("invalid", "ref must be a non-empty revision.");
+    }
     const branchRef = `refs/heads/${branch}`;
-    if (await repository.refExists(branchRef))
-      throw new NavigationError("conflict", `Branch already exists: ${branch}`);
-    const baseCommit = await repository.resolveRef(request.ref ?? "HEAD");
-    if (!baseCommit)
-      throw new NavigationError("git", `Cannot resolve revision: ${request.ref ?? "HEAD"}`);
-    const registered = await repository.worktrees();
-    if (registered.some((entry) => entry.branch === branchRef || entry.branch === branch))
-      throw new NavigationError("conflict", `Branch is already checked out: ${branch}`);
-    const managed = await this.#managedBase();
-    let requestedPath: string;
-    if (request.path !== undefined) requestedPath = expandPath(request.path, identity.mainRoot);
-    else {
-      const utils = await this.runtime.importModule<{ hashPath(root: string): string }>(
-        "@oh-my-pi/pi-utils/dirs",
-      );
-      const native = await this.runtime.importModule<{
-        resolveAvailableWorktreePath(base: string, entries: NativeWorktree[]): Promise<string>;
-      }>("tools/gh-pr-checkout.ts");
-      requestedPath = await native.resolveAvailableWorktreePath(
-        path.join(
-          managed,
-          `${branch.replace(/[^A-Za-z0-9._-]+/g, "-")}-${utils.hashPath(identity.mainRoot)}`,
-        ),
-        registered,
-      );
-    }
-    await this.#rejectMetadata(requestedPath, identity);
-    const target = await futureDirectory(requestedPath);
-    await this.#rejectMetadata(target, identity);
-    if (!pathIsWithin(managed, target)) await this.#authorize(target);
-    if (
-      pathIsWithin(target, identity.mainRoot) ||
-      registered.some(
-        (entry) =>
-          path.resolve(entry.path) !== identity.mainRoot &&
-          (pathIsWithin(path.resolve(entry.path), target) ||
-            pathIsWithin(target, path.resolve(entry.path))),
-      )
-    ) {
-      throw new NavigationError("conflict", `Destination overlaps an existing checkout: ${target}`);
-    }
-    let existing = false;
-    try {
-      const stat = await fs.lstat(requestedPath);
-      if (!stat.isDirectory() || stat.isSymbolicLink())
-        throw new NavigationError(
-          "conflict",
-          `Destination is not an ordinary directory: ${requestedPath}`,
-        );
-      if ((await fs.readdir(target)).length)
-        throw new NavigationError("conflict", `Destination is not empty: ${target}`);
-      existing = true;
-    } catch (error) {
-      if (!notFound(error)) throw error;
-    }
+    const { baseCommit, target, requestedPath } = await this.#resolveWorktreeDestination(
+      request,
+      identity,
+      repository,
+      branch,
+      branchRef,
+    );
+    const existing = await this.#prepareExistingDirectory(requestedPath, target);
     const settings = this.options.getSettings();
     await settings.flush?.();
     const task = await this.runtime.importModule<{ parseIsolationBackend(value: string): unknown }>(
@@ -448,40 +437,7 @@ export class WorkspaceNavigation {
       await repository.createBranch(branch, baseCommit, false);
       createdBranch = true;
       if (nested) {
-        const relative = path.relative(identity.mainRoot, target).split(path.sep).join("/");
-        if (/[\r\n]/.test(relative))
-          throw new NavigationError("invalid", "A nested worktree path cannot contain a newline.");
-        const check = Bun.spawn(
-          ["git", "check-ignore", "--no-index", "--quiet", "--", `${relative}/`],
-          { cwd: identity.mainRoot, stdout: "ignore", stderr: "pipe" },
-        );
-        const exit = await check.exited;
-        if (exit !== 0 && exit !== 1)
-          throw new NavigationError(
-            "git",
-            `git check-ignore failed: ${await new Response(check.stderr).text()}`,
-          );
-        if (exit === 1) {
-          const file = path.join(identity.commonDir!, "info", "exclude");
-          await fs.mkdir(path.dirname(file), { recursive: true });
-          if (!pathIsWithin(identity.commonDir!, await fs.realpath(path.dirname(file))))
-            throw new NavigationError(
-              "permission",
-              `Local exclude directory leaves Git metadata: ${file}`,
-            );
-          const excludeStat = await fs.lstat(file).catch((error) => {
-            if (notFound(error)) return undefined;
-            throw error;
-          });
-          if (excludeStat && !excludeStat.isFile())
-            throw new NavigationError(
-              "permission",
-              `Local exclude must be a regular file: ${file}`,
-            );
-          const pattern = `/${relative.replace(/[\\*?[\] #!]/g, "\\$&")}/`;
-          await fs.appendFile(file, `\n${pattern}\n`);
-          retainedExclude = file;
-        }
+        retainedExclude = await this.#applyNestedWorktreeExclude(target, identity);
       }
       await fs.mkdir(path.dirname(target), { recursive: true });
       if (!existing) {
@@ -497,70 +453,308 @@ export class WorkspaceNavigation {
       });
       const actual = await fs.realpath(target);
       const destination = (await this.#vcs).git(actual);
-      if (!destination || (await destination.statusPorcelain({ untracked: "all" })))
+      if (!destination || (await destination.statusPorcelain({ untracked: "all" }))) {
         throw new NavigationError("git", `New worktree is not clean: ${actual}`);
+      }
       return { path: actual, branch, baseCommit, mainRoot: identity.mainRoot, ...result };
     } catch (error) {
-      const retained: string[] = [];
-      const cleanupErrors: string[] = [];
-      const vcs = await this.#vcs;
-      const destination = vcs.git(target);
-      const stat = await fs.lstat(target).catch(() => undefined);
-      const reserved = Boolean(
-        reservation &&
-          stat?.isDirectory() &&
-          stat.ino === reservation.ino &&
-          stat.dev === reservation.dev,
+      await this.#worktreeFailure(error, {
+        target,
+        identity,
+        repository,
+        branch,
+        branchRef,
+        baseCommit,
+        reservation,
+        createdBranch,
+        retainedExclude,
+      });
+    }
+  }
+
+  async #resolveWorktreeDestination(
+    request: { branch: string; path?: string; ref?: string },
+    identity: { mainRoot: string; commonDir?: string },
+    repository: {
+      refExists(ref: string): Promise<boolean>;
+      resolveRef(ref?: string): Promise<string | null | undefined>;
+      worktrees(): Promise<NativeWorktree[]>;
+    },
+    branch: string,
+    branchRef: string,
+  ): Promise<{ baseCommit: string; target: string; requestedPath: string }> {
+    if (await repository.refExists(branchRef)) {
+      throw new NavigationError("conflict", `Branch already exists: ${branch}`);
+    }
+    const baseCommit = await repository.resolveRef(request.ref ?? "HEAD");
+    if (!baseCommit) {
+      throw new NavigationError("git", `Cannot resolve revision: ${request.ref ?? "HEAD"}`);
+    }
+    const registered = await repository.worktrees();
+    if (registered.some((entry) => entry.branch === branchRef || entry.branch === branch)) {
+      throw new NavigationError("conflict", `Branch is already checked out: ${branch}`);
+    }
+    const managed = await this.#managedBase();
+    let requestedPath: string;
+    if (request.path !== undefined) {
+      requestedPath = expandPath(request.path, identity.mainRoot);
+    } else {
+      const utils = await this.runtime.importModule<{ hashPath(root: string): string }>(
+        "@oh-my-pi/pi-utils/dirs",
       );
-      const owned =
-        reserved &&
-        destination &&
-        path.resolve(destination.info().repoRoot) === target &&
-        (await fs.realpath(destination.info().commonDir)) === identity.commonDir;
-      try {
-        if (owned) {
-          const entry = (await repository.worktrees()).find(
-            (entry) => path.resolve(entry.path) === target,
-          );
-          const state = entry ? await this.#state(entry, identity.mainRoot) : undefined;
-          if (
-            state?.available &&
-            !state.dirty &&
-            !state.locked &&
-            !state.inUse &&
-            !state.detached &&
-            (await destination!.resolveRef("HEAD")) === baseCommit &&
-            (await destination!.currentBranch()) === branch
-          ) {
-            if (!(await repository.worktreeRemove(target, false))) retained.push(target);
-          } else retained.push(target);
-        } else if (reserved && !(await fs.readdir(target)).length) await fs.rmdir(target);
-        else if (stat) retained.push(target);
-      } catch (cleanup) {
-        retained.push(target);
-        cleanupErrors.push(String(cleanup));
-      }
-      if (
-        createdBranch &&
-        !retained.length &&
-        (await repository.resolveRef(branchRef)) === baseCommit &&
-        !(await repository.worktrees()).some(
-          (entry) => entry.branch === branchRef || entry.branch === branch,
-        )
-      ) {
-        try {
-          if (!(await repository.deleteBranch(branch, false)))
-            cleanupErrors.push(`Branch ${branch} was retained.`);
-        } catch (cleanup) {
-          cleanupErrors.push(`Branch ${branch} was retained: ${String(cleanup)}`);
-        }
-      }
-      // Shared exclude is append-only here: rollback must never truncate another process's update.
-      throw new NavigationError(
-        "git",
-        `${error instanceof Error ? error.message : String(error)}${retained.length ? `; retained destination for inspection: ${retained.join(", ")}` : ""}${retainedExclude ? `; retained harmless exact ignore rule in ${retainedExclude}` : ""}${cleanupErrors.length ? `; cleanup: ${cleanupErrors.join("; ")}` : ""}`,
+      const native = await this.runtime.importModule<{
+        resolveAvailableWorktreePath(base: string, entries: NativeWorktree[]): Promise<string>;
+      }>("tools/gh-pr-checkout.ts");
+      requestedPath = await native.resolveAvailableWorktreePath(
+        path.join(
+          managed,
+          `${branch.replace(/[^A-Za-z0-9._-]+/g, "-")}-${utils.hashPath(identity.mainRoot)}`,
+        ),
+        registered,
       );
     }
+    await this.#rejectMetadata(requestedPath, identity);
+    const target = await futureDirectory(requestedPath);
+    await this.#rejectMetadata(target, identity);
+    if (!pathIsWithin(managed, target)) {
+      await this.#authorize(target);
+    }
+    if (
+      pathIsWithin(target, identity.mainRoot) ||
+      registered.some(
+        (entry) =>
+          path.resolve(entry.path) !== identity.mainRoot &&
+          (pathIsWithin(path.resolve(entry.path), target) ||
+            pathIsWithin(target, path.resolve(entry.path))),
+      )
+    ) {
+      throw new NavigationError("conflict", `Destination overlaps an existing checkout: ${target}`);
+    }
+    return { baseCommit, target, requestedPath };
+  }
+
+  async #prepareExistingDirectory(requestedPath: string, target: string): Promise<boolean> {
+    try {
+      const stat = await fs.lstat(requestedPath);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) {
+        throw new NavigationError(
+          "conflict",
+          `Destination is not an ordinary directory: ${requestedPath}`,
+        );
+      }
+      if ((await fs.readdir(target)).length) {
+        throw new NavigationError("conflict", `Destination is not empty: ${target}`);
+      }
+      return true;
+    } catch (error) {
+      if (!notFound(error)) {
+        throw error;
+      }
+      return false;
+    }
+  }
+
+  async #applyNestedWorktreeExclude(
+    target: string,
+    identity: { mainRoot: string; commonDir?: string },
+  ): Promise<string | undefined> {
+    const relative = path.relative(identity.mainRoot, target).split(path.sep).join("/");
+    if (/[\r\n]/.test(relative)) {
+      throw new NavigationError("invalid", "A nested worktree path cannot contain a newline.");
+    }
+    const check = Bun.spawn(
+      ["git", "check-ignore", "--no-index", "--quiet", "--", `${relative}/`],
+      { cwd: identity.mainRoot, stdout: "ignore", stderr: "pipe" },
+    );
+    const exit = await check.exited;
+    if (exit !== 0 && exit !== 1) {
+      throw new NavigationError(
+        "git",
+        `git check-ignore failed: ${await new Response(check.stderr).text()}`,
+      );
+    }
+    if (exit !== 1) {
+      return undefined;
+    }
+    const file = path.join(identity.commonDir!, "info", "exclude");
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    if (!pathIsWithin(identity.commonDir!, await fs.realpath(path.dirname(file)))) {
+      throw new NavigationError(
+        "permission",
+        `Local exclude directory leaves Git metadata: ${file}`,
+      );
+    }
+    const excludeStat = await fs.lstat(file).catch((error) => {
+      if (notFound(error)) {
+        return undefined;
+      }
+      throw error;
+    });
+    if (excludeStat && !excludeStat.isFile()) {
+      throw new NavigationError("permission", `Local exclude must be a regular file: ${file}`);
+    }
+    const pattern = `/${relative.replace(/[\\*?[\] #!]/g, "\\$&")}/`;
+    await fs.appendFile(file, `\n${pattern}\n`);
+    return file;
+  }
+
+  async #pristineWorktree(
+    destination: { resolveRef(ref: string): Promise<string>; currentBranch(): Promise<string> },
+    state:
+      | {
+          available?: boolean;
+          dirty?: boolean;
+          locked?: boolean;
+          inUse?: boolean;
+          detached?: boolean;
+        }
+      | undefined,
+    baseCommit: string,
+    branch: string,
+  ): Promise<boolean> {
+    if (!state?.available || state.dirty || state.locked || state.inUse || state.detached) {
+      return false;
+    }
+    return (
+      (await destination.resolveRef("HEAD")) === baseCommit &&
+      (await destination.currentBranch()) === branch
+    );
+  }
+
+  async #releaseFailedDestination(
+    deps: {
+      target: string;
+      branch: string;
+      baseCommit: string;
+      identity: { mainRoot: string; commonDir?: string };
+      repository: {
+        worktrees(): Promise<NativeWorktree[]>;
+        worktreeRemove(path: string, force: boolean): Promise<boolean>;
+      };
+    },
+    destination:
+      | { resolveRef(ref: string): Promise<string>; currentBranch(): Promise<string> }
+      | undefined,
+    stat: unknown,
+    reserved: boolean,
+    owned: boolean,
+    retained: string[],
+    cleanupErrors: string[],
+  ): Promise<void> {
+    try {
+      if (!owned) {
+        if (reserved && !(await fs.readdir(deps.target)).length) {
+          await fs.rmdir(deps.target);
+        } else if (stat) {
+          retained.push(deps.target);
+        }
+        return;
+      }
+      const entry = (await deps.repository.worktrees()).find(
+        (entry) => path.resolve(entry.path) === deps.target,
+      );
+      const state = entry ? await this.#state(entry, deps.identity.mainRoot) : undefined;
+      if (await this.#pristineWorktree(destination!, state, deps.baseCommit, deps.branch)) {
+        if (!(await deps.repository.worktreeRemove(deps.target, false))) {
+          retained.push(deps.target);
+        }
+      } else {
+        retained.push(deps.target);
+      }
+    } catch (cleanup) {
+      retained.push(deps.target);
+      cleanupErrors.push(String(cleanup));
+    }
+  }
+
+  async #rollbackRetainedBranch(
+    deps: {
+      branch: string;
+      branchRef: string;
+      baseCommit: string;
+      createdBranch: boolean;
+      repository: {
+        resolveRef(ref?: string): Promise<string | null | undefined>;
+        worktrees(): Promise<NativeWorktree[]>;
+        deleteBranch(branch: string, force: boolean): Promise<boolean>;
+      };
+    },
+    retained: string[],
+    cleanupErrors: string[],
+  ): Promise<void> {
+    if (
+      !deps.createdBranch ||
+      retained.length ||
+      (await deps.repository.resolveRef(deps.branchRef)) !== deps.baseCommit
+    ) {
+      return;
+    }
+    if (
+      (await deps.repository.worktrees()).some(
+        (entry) => entry.branch === deps.branchRef || entry.branch === deps.branch,
+      )
+    ) {
+      return;
+    }
+    try {
+      if (!(await deps.repository.deleteBranch(deps.branch, false))) {
+        cleanupErrors.push(`Branch ${deps.branch} was retained.`);
+      }
+    } catch (cleanup) {
+      cleanupErrors.push(`Branch ${deps.branch} was retained: ${String(cleanup)}`);
+    }
+  }
+
+  async #worktreeFailure(
+    error: unknown,
+    deps: {
+      target: string;
+      identity: { mainRoot: string; commonDir?: string };
+      repository: {
+        resolveRef(ref?: string): Promise<string | null | undefined>;
+        worktrees(): Promise<NativeWorktree[]>;
+        worktreeRemove(path: string, force: boolean): Promise<boolean>;
+        deleteBranch(branch: string, force: boolean): Promise<boolean>;
+      };
+      branch: string;
+      branchRef: string;
+      baseCommit: string;
+      reservation: { ino: number; dev: number } | undefined;
+      createdBranch: boolean;
+      retainedExclude: string | undefined;
+    },
+  ): Promise<never> {
+    const retained: string[] = [];
+    const cleanupErrors: string[] = [];
+    const vcs = await this.#vcs;
+    const destination = vcs.git(deps.target);
+    const stat = await fs.lstat(deps.target).catch(() => undefined);
+    const reserved = Boolean(
+      deps.reservation &&
+        stat?.isDirectory() &&
+        stat.ino === deps.reservation.ino &&
+        stat.dev === deps.reservation.dev,
+    );
+    const owned =
+      reserved &&
+      destination &&
+      path.resolve(destination.info().repoRoot) === deps.target &&
+      (await fs.realpath(destination.info().commonDir)) === deps.identity.commonDir;
+    await this.#releaseFailedDestination(
+      deps,
+      destination,
+      stat,
+      reserved,
+      Boolean(owned),
+      retained,
+      cleanupErrors,
+    );
+    await this.#rollbackRetainedBranch(deps, retained, cleanupErrors);
+    // Shared exclude is append-only here: rollback must never truncate another process's update.
+    throw new NavigationError(
+      "git",
+      `${error instanceof Error ? error.message : String(error)}${retained.length ? `; retained destination for inspection: ${retained.join(", ")}` : ""}${deps.retainedExclude ? `; retained harmless exact ignore rule in ${deps.retainedExclude}` : ""}${cleanupErrors.length ? `; cleanup: ${cleanupErrors.join("; ")}` : ""}`,
+    );
   }
 
   async removeWorktree(
@@ -573,17 +767,22 @@ export class WorkspaceNavigation {
       target !== targetIdentity.root ||
       !targetIdentity.isWorktree ||
       targetIdentity.commonDir !== identity.commonDir
-    )
+    ) {
       throw new NavigationError("git", `Not a linked worktree of the current project: ${target}`);
-    if (pathIsWithin(target, await existingDirectory(this.options.getCwd())))
+    }
+    if (pathIsWithin(target, await existingDirectory(this.options.getCwd()))) {
       throw new NavigationError("busy", `Cannot remove the current worktree: ${target}`);
+    }
     const entry = (await repository.worktrees()).find(
       (entry) => path.resolve(entry.path) === target,
     );
-    if (!entry) throw new NavigationError("git", `Worktree is no longer registered: ${target}`);
+    if (!entry) {
+      throw new NavigationError("git", `Worktree is no longer registered: ${target}`);
+    }
     const state = await this.#state(entry, identity.mainRoot);
-    if (state.inUse)
+    if (state.inUse) {
       throw new NavigationError("busy", `A live subagent uses this worktree: ${target}`);
+    }
     if (
       state.locked ||
       state.detached ||
@@ -591,16 +790,18 @@ export class WorkspaceNavigation {
       state.untracked ||
       !state.available ||
       !state.branch
-    )
+    ) {
       throw new NavigationError(
         "git",
         `Removal requires an available, unlocked, attached, clean worktree: ${target}`,
       );
-    if (!(await repository.worktreeRemove(target, false)))
+    }
+    if (!(await repository.worktreeRemove(target, false))) {
       throw new NavigationError(
         "git",
         `Native backend refused removal; branch ${state.branch} is kept.`,
       );
+    }
     return { path: target, branch: state.branch, mainRoot: identity.mainRoot };
   }
 }

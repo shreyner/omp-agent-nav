@@ -11,25 +11,25 @@ import {
 } from "./types";
 
 interface TaskSettings extends SettingsLike {
-  getCwd(): string;
   cloneForCwd(cwd: string): Promise<TaskSettings>;
-  overlay(values: Record<string, unknown>): TaskSettings;
   extensionsSourceLevel(): string;
+  getCwd(): string;
+  overlay(values: Record<string, unknown>): TaskSettings;
 }
-interface NativeTaskSession {
-  cwd: string;
-  settings: TaskSettings;
-  enableMCP?: boolean;
-  authStorage?: unknown;
+export interface NativeTaskSession {
   agentOutputManager?: unknown;
+  authStorage?: unknown;
+  cwd: string;
+  enableMCP?: boolean;
   getSessionSpawns(): string | null;
+  settings: TaskSettings;
   [key: string]: unknown;
 }
 interface TaskAnchor {
-  sessionId: string;
-  file: string;
   artifacts: string;
+  file: string;
   manager: unknown;
+  sessionId: string;
 }
 const anchors = new WeakMap<SessionLike, TaskAnchor>();
 const anchorTransitions = new WeakMap<SessionLike, Promise<void>>();
@@ -42,7 +42,9 @@ export async function syncTaskAnchor(runtime: RuntimeModules, parent: SessionLik
   try {
     await transition;
   } finally {
-    if (anchorTransitions.get(parent) === transition) anchorTransitions.delete(parent);
+    if (anchorTransitions.get(parent) === transition) {
+      anchorTransitions.delete(parent);
+    }
   }
 }
 
@@ -54,7 +56,9 @@ async function applyTaskAnchor(runtime: RuntimeModules, parent: SessionLike): Pr
     getArtifactsDir(): string | null;
   };
   const actualFile = manager.getSessionFile();
-  if (!actualFile) return;
+  if (!actualFile) {
+    return;
+  }
   let anchor = anchors.get(parent);
   if (!anchor || anchor.sessionId !== parent.sessionId) {
     const file = join(
@@ -71,7 +75,9 @@ async function applyTaskAnchor(runtime: RuntimeModules, parent: SessionLike): Pr
     const anchorExists = await fs.stat(artifacts).then(
       () => true,
       (error) => {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          return false;
+        }
         throw error;
       },
     );
@@ -79,7 +85,9 @@ async function applyTaskAnchor(runtime: RuntimeModules, parent: SessionLike): Pr
       await fs
         .cp(previousArtifacts, artifacts, { recursive: true, errorOnExist: true, force: false })
         .catch((error) => {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+            throw error;
+          }
         });
     }
     const native = findNativeToolSession(parent);
@@ -104,18 +112,18 @@ async function applyTaskAnchor(runtime: RuntimeModules, parent: SessionLike): Pr
   const ref = runtime.host.AgentRegistry.global()
     .list()
     .find((value) => value.session === parent);
-  if (ref) (ref as typeof ref & { sessionFile: string }).sessionFile = anchor.file;
+  if (ref) {
+    (ref as typeof ref & { sessionFile: string }).sessionFile = anchor.file;
+  }
 }
 interface Schema {
-  get(...keys: (string | number)[]): Schema;
-  exclude(value: string): Schema;
-  merge(fields: Record<string, unknown>): Schema;
   array(): Schema;
+  exclude(value: string): Schema;
+  get(...keys: (string | number)[]): Schema;
+  merge(fields: Record<string, unknown>): Schema;
   toJsonSchema(): Record<string, unknown>;
 }
 interface NativeTask {
-  session: NativeTaskSession;
-  parameters: Schema;
   description: string;
   execute(
     id: string,
@@ -123,6 +131,8 @@ interface NativeTask {
     signal?: AbortSignal,
     onUpdate?: (result: TaskResult) => void,
   ): Promise<TaskResult>;
+  parameters: Schema;
+  session: NativeTaskSession;
 }
 interface TaskResult {
   content: Array<{ type: string; text?: string; [key: string]: unknown }>;
@@ -135,8 +145,8 @@ interface TaskResult {
   [key: string]: unknown;
 }
 export interface ScopedMcpManager {
-  getTools(): unknown[];
   disconnectAll(): Promise<void>;
+  getTools(): unknown[];
 }
 /** Shared budget for target-MCP startup readiness; mutable for tests. */
 export const mcpStartupWait = { ms: 30_000 };
@@ -144,13 +154,16 @@ const ownedMcpManagers = new WeakMap<NativeTaskSession, ScopedMcpManager>();
 
 export function findNativeToolSession(session: SessionLike): NativeTaskSession {
   const getTool = (session as SessionLike & { getToolByName(name: string): unknown }).getToolByName;
-  if (!getTool)
+  if (!getTool) {
     throw new Error("omp-nav cannot access the native tool session on this omp runtime.");
+  }
   for (const name of ["task", "read", "bash", "edit", "write"]) {
     let tool = getTool.call(session, name) as Record<string, unknown> | undefined;
     for (let depth = 0; tool && depth < 8; depth++) {
       const candidate = tool.session as NativeTaskSession | undefined;
-      if (candidate?.settings && typeof candidate.getSessionSpawns === "function") return candidate;
+      if (candidate?.settings && typeof candidate.getSessionSpawns === "function") {
+        return candidate;
+      }
       tool = tool.tool as Record<string, unknown> | undefined;
     }
   }
@@ -159,10 +172,14 @@ export function findNativeToolSession(session: SessionLike): NativeTaskSession {
   );
 }
 
-type SettingRegistry = { lookup(id: string): { get(settings: SettingsLike): unknown } | undefined };
+interface SettingRegistry {
+  lookup(id: string): { get(settings: SettingsLike): unknown } | undefined;
+}
 function readSetting(registry: SettingRegistry, settings: SettingsLike, key: string) {
   const handle = registry.lookup(key);
-  if (!handle) throw new Error(`omp-nav needs the native ${key} setting on this omp runtime.`);
+  if (!handle) {
+    throw new Error(`omp-nav needs the native ${key} setting on this omp runtime.`);
+  }
   return handle.get(settings);
 }
 function extensionRoots(settings: TaskSettings, registry: SettingRegistry) {
@@ -195,7 +212,9 @@ export async function createScopedMcpManager(
     };
   }>("mcp/manager.ts");
   const manager = new MCPManager(cwd);
-  if (authStorage) manager.setAuthStorage(authStorage);
+  if (authStorage) {
+    manager.setAuthStorage(authStorage);
+  }
   try {
     const loaded = await manager.discoverAndConnect({
       enableProjectConfig: readSetting(registry, settings, "mcp.enableProjectConfig"),
@@ -349,7 +368,9 @@ export async function installTaskTool(
     advertisedTask = await TaskTool.create(findNativeToolSession(advertisedParent));
     if (advertisedKind === "main") {
       const remove = bridge.addAfterRelocationHook(async (session) => {
-        if (session !== advertisedParent) return;
+        if (session !== advertisedParent) {
+          return;
+        }
         await syncTaskAnchor(runtime, session);
         advertisedTask = await TaskTool.create(findNativeToolSession(session));
       });
@@ -362,12 +383,16 @@ export async function installTaskTool(
     label: "Task",
     approval: "exec",
     get description() {
-      if (advertisedKind === "sub") return advertisedTask!.description;
+      if (advertisedKind === "sub") {
+        return advertisedTask!.description;
+      }
       return `${advertisedTask?.description ?? "Delegate to native omp agents."}\nOptional cwd selects the project before agent discovery and launch. Each tasks[] item may set its own cwd; omitted cwd snapshots the parent's directory. Child instructions, tools, MCP, and memory come from the destination.`;
     },
     get parameters() {
       const schema = advertisedTask?.parameters ?? initialSchema;
-      if (advertisedKind === "sub") return schema;
+      if (advertisedKind === "sub") {
+        return schema;
+      }
       const properties = schema.toJsonSchema().properties as Record<string, unknown> | undefined;
       return properties?.tasks
         ? schema.merge({
@@ -378,50 +403,13 @@ export async function installTaskTool(
     async execute(id, raw, signal, onUpdate, ctx) {
       const parent = bridge.currentSession(ctx);
       if (ctx.agent.kind === "sub") {
-        if (
-          Object.hasOwn(raw, "cwd") ||
-          (Array.isArray(raw.tasks) &&
-            raw.tasks.some(
-              (item) => item && typeof item === "object" && Object.hasOwn(item, "cwd"),
-            ))
-        ) {
-          throw new Error("Only the main session can assign task.cwd to a subagent.");
-        }
-        const task = advertisedTask ?? (await TaskTool.create(findNativeToolSession(parent)));
-        return task.execute(
-          id,
-          raw,
-          signal,
-          typeof onUpdate === "function" ? (onUpdate as (result: TaskResult) => void) : undefined,
-        );
+        return await runSubagentTask({ id, raw, signal, onUpdate, parent, advertisedTask });
       }
       const sourceCwd = parent.sessionManager.getCwd();
       const batch = Array.isArray(raw.tasks);
-      if (batch && readSetting(registry, parent.settings, "task.batch") !== true)
-        throw new Error("task.batch is disabled in the main session.");
-      if (batch && raw.cwd !== undefined)
-        throw new Error("For batch tasks, specify cwd in each tasks[] item.");
-      const items = batch ? (raw.tasks as Record<string, unknown>[]) : [raw];
-      if (!items.length) throw new Error("Provide at least one tasks[] item.");
-      if (batch && (typeof raw.context !== "string" || !raw.context.trim()))
-        throw new Error("Batch tasks require a non-empty shared context.");
-      if (batch && typeof raw.task === "string" && raw.task.trim())
-        throw new Error("Put batch assignments in tasks[] rather than top-level task.");
-      for (const item of items) {
-        if (!item || typeof item.task !== "string" || !item.task.trim())
-          throw new Error("Every task requires a non-empty assignment.");
-      }
-      const names = items
-        .filter((item) => typeof item.name === "string" && item.name.trim())
-        .map((item) => (item.name as string).trim().toLowerCase());
-      if (new Set(names).size !== names.length) throw new Error("Batch task names must be unique.");
-      const targets = await Promise.all(
-        items.map(async (item) => {
-          if (item.cwd !== undefined && (typeof item.cwd !== "string" || !item.cwd.trim()))
-            throw new Error("task.cwd must be a non-empty path.");
-          const requested = typeof item.cwd === "string" ? item.cwd : sourceCwd;
-          return bridge.assertAllowedPath(ctx, requested);
-        }),
+      const items = assertTaskRequestShape(raw, registry, parent.settings);
+      const targets = await resolveTaskTargets(items, sourceCwd, (requested) =>
+        bridge.assertAllowedPath(ctx, requested),
       );
       await syncTaskAnchor(runtime, parent);
       const limit = Math.max(
@@ -429,59 +417,20 @@ export async function installTaskTool(
         Math.trunc(Number(readSetting(registry, parent.settings, "task.maxConcurrency")) || 0),
       );
       let gate = gates.get(parent);
-      if (gate) gate.resize(limit);
-      else {
+      if (gate) {
+        gate.resize(limit);
+      } else {
         gate = new Semaphore(limit);
         gates.set(parent, gate);
       }
       const scopes = new Map<string, Promise<NativeTask>>();
       // Resolve every destination before native preflight can allocate an artifact or start a child.
-      for (const target of new Set(targets))
+      for (const target of new Set(targets)) {
         scopes.set(
           target,
           prepareTaskScope(runtime, parent, target, batch).then(async (scoped) => {
             try {
-              const manager = scoped.asyncJobManager as
-                | {
-                    register(
-                      type: unknown,
-                      label: unknown,
-                      run: (context: { signal: AbortSignal }) => Promise<unknown>,
-                      options: unknown,
-                    ): unknown;
-                  }
-                | undefined;
-              const ownerId = (scoped.getAgentId as (() => string | null) | undefined)?.();
-              if (manager)
-                scoped.asyncJobManager = new Proxy(manager, {
-                  get(object, property) {
-                    if (property === "register")
-                      return (
-                        type: unknown,
-                        label: unknown,
-                        run: (context: { signal: AbortSignal }) => Promise<unknown>,
-                        options: unknown,
-                      ) => {
-                        if ((options as { ownerId?: string } | undefined)?.ownerId !== ownerId)
-                          return object.register(type, label, run, options);
-                        return object.register(
-                          type,
-                          label,
-                          async (context) => {
-                            await gate!.acquire(context.signal);
-                            try {
-                              return await run(context);
-                            } finally {
-                              gate!.release();
-                            }
-                          },
-                          options,
-                        );
-                      };
-                    const value = Reflect.get(object, property, object);
-                    return typeof value === "function" ? value.bind(object) : value;
-                  },
-                });
+              wrapOwnedAsyncJobs(scoped, gate!);
               return await TaskTool.create(scoped);
             } catch (error) {
               await ownedMcpManagers.get(scoped)?.disconnectAll();
@@ -489,6 +438,7 @@ export async function installTaskTool(
             }
           }),
         );
+      }
       const prepared = await Promise.allSettled(scopes.values());
       const ready = prepared
         .filter((value) => value.status === "fulfilled")
@@ -511,21 +461,7 @@ export async function installTaskTool(
               readSetting(registry, task.session.settings, "task.structured") === true;
             return policy.resolveEffectiveSubagentPolicy({
               session: task.session,
-              invocationKind: "task",
-              assignment: item.task,
-              context: batch ? raw.context : undefined,
-              agent: item.agent,
-              structured,
-              ...(structured && Object.hasOwn(item, "outputSchema")
-                ? { outputSchema: item.outputSchema }
-                : {}),
-              ...(structured && Object.hasOwn(item, "schemaMode")
-                ? { schemaMode: item.schemaMode }
-                : {}),
-              effort: item.effort,
-              ...(Object.hasOwn(item, "isolated")
-                ? { isolation: { requested: item.isolated } }
-                : {}),
+              ...taskPreflightOptions(item, raw, batch, structured),
               signal,
             });
           }),
@@ -537,69 +473,328 @@ export async function installTaskTool(
       const started = Date.now();
       const snapshots: TaskResult[] = new Array(items.length);
       const merged = () => mergeTaskOutcomes(snapshots.filter(Boolean), Date.now() - started);
-      const invoke = async (index: number) => {
-        signal?.throwIfAborted();
-        const task = await scopes.get(targets[index])!;
-        const { cwd: _cwd, ...params } = items[index];
-        const nativeParams = batch ? { context: raw.context, tasks: [params] } : params;
-        const update =
-          typeof onUpdate === "function" ? (onUpdate as (result: TaskResult) => void) : undefined;
-        const inline =
-          readSetting(registry, task.session.settings, "async.enabled") !== true ||
-          !task.session.asyncJobManager ||
-          preflights[index].effectiveAgent.blocking === true;
-        if (inline) await gate!.acquire(signal);
-        let outcome: TaskResult;
-        try {
-          outcome = await task.execute(
+      const invoke = (index: number) =>
+        runTaskInvocation(
+          {
             id,
-            nativeParams,
             signal,
-            update
-              ? (result) => {
-                  snapshots[index] = {
-                    ...result,
-                    details: {
-                      ...result.details,
-                      results: result.details.results.map((value) => ({ ...value, index })),
-                      progress: result.details.progress?.map((value) => ({ ...value, index })),
-                    },
-                  };
-                  update(batch ? merged() : snapshots[index]);
-                }
-              : undefined,
-          );
-        } finally {
-          if (inline) gate!.release();
-        }
-        snapshots[index] = {
-          ...outcome,
-          details: {
-            ...outcome.details,
-            results: outcome.details.results.map((result) => ({ ...result, index })),
-            progress: outcome.details.progress?.map((value) => ({ ...value, index })),
+            onUpdate,
+            registry,
+            scopes,
+            targets,
+            items,
+            raw,
+            batch,
+            snapshots,
+            merged,
+            gate,
+            preflights,
           },
-        };
-        return snapshots[index];
-      };
-      if (!batch) return invoke(0);
-      let next = 0;
-      await Promise.all(
-        Array.from(
-          { length: limit > 0 ? Math.min(limit, items.length) : items.length },
-          async () => {
-            while (next < items.length) {
-              const index = next++;
-              await invoke(index);
-            }
-          },
-        ),
-      );
+          index,
+        );
+      if (!batch) {
+        return await invoke(0);
+      }
+      await runBatchedInvocations(items, limit, invoke);
       return merged();
     },
   });
 }
 
+function aggregateUsage(
+  usages: Array<{ cost: Record<string, number>; [key: string]: unknown }>,
+): Record<string, unknown> {
+  const usage: Record<string, unknown> = { cost: {} };
+  for (const current of usages) {
+    for (const [key, value] of Object.entries(current)) {
+      if (typeof value === "number") {
+        usage[key] = Number(usage[key] ?? 0) + value;
+      }
+    }
+    const cost = usage.cost as Record<string, number>;
+    for (const [key, value] of Object.entries(current.cost ?? {})) {
+      cost[key] = (cost[key] ?? 0) + value;
+    }
+  }
+  return usage;
+}
+
+function summarizeAsyncStates(asyncStates: Array<{ state: string; jobId: string; type: string }>): {
+  state: string;
+  jobId: string;
+  type: string;
+} {
+  const states = asyncStates.map((value) => value.state);
+  return {
+    ...asyncStates[0],
+    state: states.includes("running")
+      ? "running"
+      : states.includes("failed")
+        ? "failed"
+        : "completed",
+  };
+}
+
+function hasCwdAssignment(raw: Record<string, unknown>): boolean {
+  return (
+    Object.hasOwn(raw, "cwd") ||
+    (Array.isArray(raw.tasks) &&
+      raw.tasks.some((item) => item && typeof item === "object" && Object.hasOwn(item, "cwd")))
+  );
+}
+
+async function runSubagentTask(deps: {
+  id: string;
+  raw: Record<string, unknown>;
+  signal?: AbortSignal;
+  onUpdate: unknown;
+  parent: SessionLike;
+  advertisedTask: NativeTask | undefined;
+}): Promise<TaskResult> {
+  if (hasCwdAssignment(deps.raw)) {
+    throw new Error("Only the main session can assign task.cwd to a subagent.");
+  }
+  const task = deps.advertisedTask ?? (await TaskTool.create(findNativeToolSession(deps.parent)));
+  return await task.execute(
+    deps.id,
+    deps.raw,
+    deps.signal,
+    typeof deps.onUpdate === "function"
+      ? (deps.onUpdate as (result: TaskResult) => void)
+      : undefined,
+  );
+}
+
+function assertTaskRequestShape(
+  raw: Record<string, unknown>,
+  registry: Parameters<typeof readSetting>[0],
+  settings: SettingsLike,
+): Record<string, unknown>[] {
+  const batch = Array.isArray(raw.tasks);
+  assertBatchTaskRules(raw, batch, registry, settings);
+  const items = batch ? (raw.tasks as Record<string, unknown>[]) : [raw];
+  if (!items.length) {
+    throw new Error("Provide at least one tasks[] item.");
+  }
+  for (const item of items) {
+    if (!item || typeof item.task !== "string" || !item.task.trim()) {
+      throw new Error("Every task requires a non-empty assignment.");
+    }
+  }
+  const names = items
+    .filter((item) => typeof item.name === "string" && item.name.trim())
+    .map((item) => (item.name as string).trim().toLowerCase());
+  if (new Set(names).size !== names.length) {
+    throw new Error("Batch task names must be unique.");
+  }
+  return items;
+}
+
+function wrapOwnedAsyncJobs(
+  scoped: { asyncJobManager?: unknown; getAgentId?: unknown },
+  gate: Semaphore,
+): void {
+  const manager = scoped.asyncJobManager as
+    | {
+        register(
+          type: unknown,
+          label: unknown,
+          run: (context: { signal: AbortSignal }) => Promise<unknown>,
+          options: unknown,
+        ): unknown;
+      }
+    | undefined;
+  const ownerId = (scoped.getAgentId as (() => string | null) | undefined)?.();
+  if (!manager) {
+    return;
+  }
+  scoped.asyncJobManager = new Proxy(manager, {
+    get(object, property) {
+      if (property === "register") {
+        return (
+          type: unknown,
+          label: unknown,
+          run: (context: { signal: AbortSignal }) => Promise<unknown>,
+          options: unknown,
+        ) => {
+          if ((options as { ownerId?: string } | undefined)?.ownerId !== ownerId) {
+            return object.register(type, label, run, options);
+          }
+          return object.register(
+            type,
+            label,
+            async (context) => {
+              await gate.acquire(context.signal);
+              try {
+                return await run(context);
+              } finally {
+                gate.release();
+              }
+            },
+            options,
+          );
+        };
+      }
+      const value = Reflect.get(object, property, object);
+      return typeof value === "function" ? value.bind(object) : value;
+    },
+  });
+}
+
+function assertBatchTaskRules(
+  raw: Record<string, unknown>,
+  batch: boolean,
+  registry: Parameters<typeof readSetting>[0],
+  settings: SettingsLike,
+): void {
+  if (!batch) {
+    return;
+  }
+  if (readSetting(registry, settings, "task.batch") !== true) {
+    throw new Error("task.batch is disabled in the main session.");
+  }
+  if (raw.cwd !== undefined) {
+    throw new Error("For batch tasks, specify cwd in each tasks[] item.");
+  }
+  if (typeof raw.context !== "string" || !raw.context.trim()) {
+    throw new Error("Batch tasks require a non-empty shared context.");
+  }
+  if (typeof raw.task === "string" && raw.task.trim()) {
+    throw new Error("Put batch assignments in tasks[] rather than top-level task.");
+  }
+}
+
+async function resolveTaskTargets(
+  items: Record<string, unknown>[],
+  sourceCwd: string,
+  resolve: (path: string) => Promise<string>,
+): Promise<string[]> {
+  return await Promise.all(
+    items.map(async (item) => {
+      if (item.cwd !== undefined && (typeof item.cwd !== "string" || !item.cwd.trim())) {
+        throw new Error("task.cwd must be a non-empty path.");
+      }
+      const requested = typeof item.cwd === "string" ? item.cwd : sourceCwd;
+      return await resolve(requested);
+    }),
+  );
+}
+
+async function runTaskInvocation(
+  deps: {
+    id: string;
+    signal?: AbortSignal;
+    onUpdate: unknown;
+    registry: Parameters<typeof readSetting>[0];
+    scopes: Map<string, Promise<NativeTask>>;
+    targets: string[];
+    items: Record<string, unknown>[];
+    raw: Record<string, unknown>;
+    batch: boolean;
+    snapshots: TaskResult[];
+    merged: () => TaskResult;
+    gate: Semaphore;
+    preflights: Array<{ effectiveAgent: { blocking?: boolean } }>;
+  },
+  index: number,
+): Promise<TaskResult> {
+  const {
+    id,
+    signal,
+    onUpdate,
+    registry,
+    scopes,
+    targets,
+    items,
+    raw,
+    batch,
+    snapshots,
+    merged,
+    gate,
+    preflights,
+  } = deps;
+  signal?.throwIfAborted();
+  const task = await scopes.get(targets[index])!;
+  const { cwd: _cwd, ...params } = items[index];
+  const nativeParams = batch ? { context: raw.context, tasks: [params] } : params;
+  const update =
+    typeof onUpdate === "function" ? (onUpdate as (result: TaskResult) => void) : undefined;
+  const inline =
+    readSetting(registry, task.session.settings, "async.enabled") !== true ||
+    !task.session.asyncJobManager ||
+    preflights[index].effectiveAgent.blocking === true;
+  if (inline) {
+    await gate.acquire(signal);
+  }
+  let outcome: TaskResult;
+  try {
+    outcome = await task.execute(
+      id,
+      nativeParams,
+      signal,
+      update
+        ? (result) => {
+            snapshots[index] = decorateTaskResult(result, index);
+            update(batch ? merged() : snapshots[index]);
+          }
+        : undefined,
+    );
+  } finally {
+    if (inline) {
+      gate.release();
+    }
+  }
+  snapshots[index] = decorateTaskResult(outcome, index);
+  return snapshots[index];
+}
+
+async function runBatchedInvocations(
+  items: Record<string, unknown>[],
+  limit: number,
+  invoke: (index: number) => Promise<TaskResult>,
+): Promise<void> {
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: limit > 0 ? Math.min(limit, items.length) : items.length }, async () => {
+      while (next < items.length) {
+        const index = next++;
+        await invoke(index);
+      }
+    }),
+  );
+}
+
+function taskPreflightOptions(
+  item: Record<string, unknown>,
+  raw: Record<string, unknown>,
+  batch: boolean,
+  structured: boolean,
+) {
+  return {
+    invocationKind: "task",
+    assignment: item.task,
+    context: batch ? raw.context : undefined,
+    agent: item.agent,
+    structured,
+    ...(structured && Object.hasOwn(item, "outputSchema")
+      ? { outputSchema: item.outputSchema }
+      : {}),
+    ...(structured && Object.hasOwn(item, "schemaMode") ? { schemaMode: item.schemaMode } : {}),
+    effort: item.effort,
+    ...(Object.hasOwn(item, "isolated") ? { isolation: { requested: item.isolated } } : {}),
+  };
+}
+
+function decorateTaskResult(result: TaskResult, index: number): TaskResult {
+  return {
+    ...result,
+    details: {
+      ...result.details,
+      results: result.details.results.map((value) => ({ ...value, index })),
+      progress: result.details.progress?.map((value) => ({ ...value, index })),
+    },
+  };
+}
 function mergeTaskOutcomes(outcomes: TaskResult[], duration: number): TaskResult {
   const progress = outcomes.flatMap((outcome) => outcome.details.progress ?? []);
   const asyncStates = outcomes
@@ -616,15 +811,7 @@ function mergeTaskOutcomes(outcomes: TaskResult[], duration: number): TaskResult
           | undefined,
     )
     .filter((value) => value !== undefined);
-  const usage: Record<string, unknown> = { cost: {} };
-  for (const current of usages) {
-    for (const [key, value] of Object.entries(current)) {
-      if (typeof value === "number") usage[key] = Number(usage[key] ?? 0) + value;
-    }
-    const cost = usage.cost as Record<string, number>;
-    for (const [key, value] of Object.entries(current.cost ?? {}))
-      cost[key] = (cost[key] ?? 0) + value;
-  }
+  const usage = aggregateUsage(usages);
   return {
     content: outcomes.flatMap((outcome) => outcome.content),
     isError: outcomes.some((outcome) => outcome.isError === true),
@@ -637,18 +824,7 @@ function mergeTaskOutcomes(outcomes: TaskResult[], duration: number): TaskResult
       ...(usages.length ? { usage } : {}),
       outputPaths: outcomes.flatMap((outcome) => (outcome.details.outputPaths as string[]) ?? []),
       ...(progress.length ? { progress } : {}),
-      ...(asyncStates.length
-        ? {
-            async: {
-              ...asyncStates[0],
-              state: asyncStates.some((value) => value.state === "running")
-                ? "running"
-                : asyncStates.some((value) => value.state === "failed")
-                  ? "failed"
-                  : "completed",
-            },
-          }
-        : {}),
+      ...(asyncStates.length ? { async: summarizeAsyncStates(asyncStates) } : {}),
     },
   };
 }

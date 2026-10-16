@@ -5,7 +5,9 @@ import { join, relative } from "node:path";
 
 const temporary: string[] = [];
 afterEach(async () => {
-  while (temporary.length) await fs.rm(temporary.pop()!, { recursive: true, force: true });
+  while (temporary.length) {
+    await fs.rm(temporary.pop()!, { recursive: true, force: true });
+  }
 });
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
@@ -15,7 +17,9 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
   ]);
-  if (code) throw new Error(error);
+  if (code) {
+    throw new Error(error);
+  }
   return output.trim();
 }
 
@@ -247,7 +251,9 @@ sys.exit(child.returncode)
 `,
     );
     args = ["python3", driver, JSON.stringify([...f.args, "/integration-run"])];
-  } else args = [...f.args, "--mode", "rpc"];
+  } else {
+    args = [...f.args, "--mode", "rpc"];
+  }
   const child = Bun.spawn(args, {
     cwd: f.a,
     env: f.env,
@@ -290,15 +296,22 @@ sys.exit(child.returncode)
     clearInterval(reportWatcher);
     child.stdin.end();
   }
-  if (code || !(await fs.exists(f.report)))
+  if (code || !(await fs.exists(f.report))) {
     throw new Error(`${mode} integration failed (${code}): ${stderr}\n${stdout.slice(-6000)}`);
+  }
   expect(stderr).not.toContain("Failed to load extension");
   const result = JSON.parse(await fs.readFile(f.report, "utf8"));
-  if (result.fixtureError) throw new Error(result.fixtureError);
+  if (result.fixtureError) {
+    throw new Error(result.fixtureError);
+  }
   expect(result.api).toBe(true);
   expect(result.mode).toBe(mode);
-  if (mode === "tui") expect(result.ownerMatches).toBe(true);
-  for (const snapshot of result.snapshots) expect(snapshot.id).toBe(result.before.id);
+  if (mode === "tui") {
+    expect(result.ownerMatches).toBe(true);
+  }
+  for (const snapshot of result.snapshots) {
+    expect(snapshot.id).toBe(result.before.id);
+  }
   expect(result.btwBusy.state.cwd).toBe(result.before.cwd);
   expect(result.btwBusy.state.file).toBe(result.before.file);
   expect(JSON.stringify(result.btwBusy.messages)).toContain("BTW");
@@ -354,7 +367,9 @@ sys.exit(child.returncode)
   expect(JSON.stringify(result.cancelled.messages)).toContain('\\"status\\":\\"cancelled\\"');
   expect(result.mixed.state.cwd).toBe(f.a);
   expect(result.mixed.writeExists).toBe(false);
-  if (mode === "rpc") expect(stdout).toContain('"command":"prompt","success":true');
+  if (mode === "rpc") {
+    expect(stdout).toContain('"command":"prompt","success":true');
+  }
 }
 
 test("ordinary omp TUI moves A/B/A, runs gopls against the worktree branch and safely removes it", async () => {

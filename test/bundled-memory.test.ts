@@ -196,10 +196,11 @@ export default async function(pi) {
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
     ]);
-    if (code || !(await fs.exists(report)))
+    if (code || !(await fs.exists(report))) {
       throw new Error(
         `Bundled memory fixture failed (${code}): ${stderr}\n${stdout}\n${await fs.readFile(join(root, "failure.json"), "utf8").catch(() => "")}`,
       );
+    }
     expect(code).toBe(0);
     expect(stderr).not.toContain("Failed to load extension");
     expect(JSON.parse(await fs.readFile(report, "utf8"))).toEqual({

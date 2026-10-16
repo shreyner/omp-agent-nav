@@ -14,8 +14,8 @@ interface TestAgent extends SessionLike.agent {
   setSystemPrompt(prompt: string[]): void;
 }
 interface MockContext {
-  systemPrompt: string[];
   messages: Array<{ role: string; content: unknown }>;
+  systemPrompt: string[];
 }
 const { Agent } = await runtime.importModule<{
   Agent: new (options: Record<string, unknown>) => TestAgent;
@@ -36,8 +36,12 @@ const { Type } = await runtime.importModule<{
 const temporary: string[] = [];
 const coordinators: WorkspaceCoordinator[] = [];
 afterEach(async () => {
-  for (const coordinator of coordinators.splice(0)) coordinator.dispose();
-  while (temporary.length) await fs.rm(temporary.pop()!, { recursive: true, force: true });
+  for (const coordinator of coordinators.splice(0)) {
+    coordinator.dispose();
+  }
+  while (temporary.length) {
+    await fs.rm(temporary.pop()!, { recursive: true, force: true });
+  }
 });
 
 async function fixture(
@@ -57,13 +61,14 @@ async function fixture(
   const mock = createMockModel({
     handler: (_context: MockContext) => {
       order.push("model");
-      if (order.filter((item) => item === "model").length === 1)
+      if (order.filter((item) => item === "model").length === 1) {
         return {
           content: [
             { type: "toolCall", name: "session_move", arguments: { dir: b } },
             ...(options.mixed ? [{ type: "toolCall", name: "write", arguments: {} }] : []),
           ],
         };
+      }
       return { content: ["done"] };
     },
   });
@@ -129,15 +134,20 @@ async function fixture(
     relocate: async (cwd) => {
       order.push("apply-start");
       await Promise.resolve();
-      if (options.fatal)
+      if (options.fatal) {
         throw new WorkspaceRollbackError("Restore failed; stop before another model request.");
-      if (options.fail) throw new Error("prepare failed; original state intact");
+      }
+      if (options.fail) {
+        throw new Error("prepare failed; original state intact");
+      }
       manager.setCwdWithoutRelocation(cwd);
       agent.setSystemPrompt(["B-context"]);
       order.push("apply-end");
     },
     withGate: async (operation) => {
-      if (options.gateBusy) throw new Error("BTW busy");
+      if (options.gateBusy) {
+        throw new Error("BTW busy");
+      }
       return await operation();
     },
   });

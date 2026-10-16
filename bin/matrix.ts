@@ -10,7 +10,9 @@ let versions = args;
 if (!versions.length) {
   const source = readFileSync(join(import.meta.dir, "..", "src", "runtime.ts"), "utf8");
   const match = source.match(/SUPPORTED_OMP_VERSIONS[^=]*=\s*\[([^\]]*)\]/);
-  if (!match) throw new Error("Cannot parse SUPPORTED_OMP_VERSIONS from src/runtime.ts");
+  if (!match) {
+    throw new Error("Cannot parse SUPPORTED_OMP_VERSIONS from src/runtime.ts");
+  }
   versions = [...match[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
 }
 const failures: string[] = [];
@@ -22,12 +24,14 @@ for (const version of versions) {
     await Bun.$`npm --prefix ${prefix} install --no-audit --no-fund @oh-my-pi/pi-coding-agent@${version}`
       .quiet()
       .nothrow();
-  if (install.exitCode)
+  if (install.exitCode) {
     throw new Error(`npm install failed for ${version}:\n${install.stderr.toString()}`);
+  }
   const ompBin = join(prefix, "node_modules", ".bin", "omp");
   const versionCheck = await Bun.$`${ompBin} --version`.quiet().nothrow();
-  if (versionCheck.exitCode || !versionCheck.stdout.toString().trim().endsWith(version))
+  if (versionCheck.exitCode || !versionCheck.stdout.toString().trim().endsWith(version)) {
     throw new Error(`omp ${version} binary check failed: ${versionCheck.stdout.toString().trim()}`);
+  }
   console.log(`=== omp ${version}: bun test ./test ===`);
   const started = Date.now();
   const proc = Bun.spawn(["bun", "test", "./test"], {
@@ -41,7 +45,9 @@ for (const version of versions) {
   console.log(
     `=== omp ${version}: ${ok ? "PASS" : "FAIL"} in ${Math.round((Date.now() - started) / 1000)}s ===`,
   );
-  if (!ok) failures.push(version);
+  if (!ok) {
+    failures.push(version);
+  }
 }
 if (failures.length) {
   console.error(`Matrix failures: ${failures.join(", ")}`);

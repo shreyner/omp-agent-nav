@@ -5,13 +5,13 @@ import { installTaskTool } from "./task";
 import { type ExtensionApiLike, type WorkspaceRequest } from "./types";
 
 interface SchemaBuilder {
-  String(options?: { description?: string; minLength?: number }): unknown;
-  Optional(schema: unknown): unknown;
+  Array(items: unknown, options?: { minItems?: number }): unknown;
   Object(
     properties: Record<string, unknown>,
     options?: { additionalProperties?: boolean },
   ): unknown;
-  Array(items: unknown, options?: { minItems?: number }): unknown;
+  Optional(schema: unknown): unknown;
+  String(options?: { description?: string; minLength?: number }): unknown;
 }
 
 export default async function navigationExtension(pi: ExtensionApiLike): Promise<void> {
@@ -76,12 +76,14 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
       approval: "write",
       loadMode: "essential",
       execute: async (id, params, signal, _update, ctx) => {
-        if (ctx.agent.kind !== "main")
+        if (ctx.agent.kind !== "main") {
           throw new Error("Workspace navigation is available only to the main session.");
+        }
         signal?.throwIfAborted();
         bridge.coordinator(ctx).assertDirectToolCall(id);
-        if (!ctx.requestWorkspaceChange)
+        if (!ctx.requestWorkspaceChange) {
           throw new Error("The omp-nav context bridge is unavailable.");
+        }
         const result = await ctx.requestWorkspaceChange(tool.request(params));
         return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
       },
@@ -97,7 +99,9 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
     approval: "read",
     loadMode: "essential",
     execute: async (_id, _params, _signal, _update, ctx) => {
-      if (!ctx.listWorktrees) throw new Error("The omp-nav context bridge is unavailable.");
+      if (!ctx.listWorktrees) {
+        throw new Error("The omp-nav context bridge is unavailable.");
+      }
       const result = await ctx.listWorktrees();
       return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
     },
@@ -129,8 +133,9 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
     },
     loadMode: "essential",
     execute: async (id, params, signal, _update, ctx) => {
-      if (ctx.agent.kind !== "main")
+      if (ctx.agent.kind !== "main") {
         throw new Error("Workspace grants are available only to the main session.");
+      }
       signal?.throwIfAborted();
       bridge.coordinator(ctx).assertDirectToolCall(id);
       const result = await bridge.grantWorkspaceDirs(ctx, params.dirs as string[]);
@@ -156,8 +161,9 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
     }
   });
   pi.on("session_before_switch", async (_event, ctx) => {
-    if (ctx.agent.kind === "main")
+    if (ctx.agent.kind === "main") {
       await bridge.coordinator(ctx).cancel("The session is switching.");
+    }
   });
   pi.on("session_switch", async (_event, ctx) => {
     if (ctx.agent.kind === "main") {
@@ -168,13 +174,17 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
     }
   });
   pi.on("session_shutdown", (_event, ctx) => {
-    if (ctx.agent.kind === "main") bridge.coordinator(ctx).dispose();
+    if (ctx.agent.kind === "main") {
+      bridge.coordinator(ctx).dispose();
+    }
   });
   pi.registerCommand("nav-move", {
     description: "Move this idle main session into an allowed project directory.",
     handler: async (args, ctx) => {
       const isIdle = ctx.isIdle as () => boolean;
-      if (!isIdle()) throw new Error("Wait for the current response to finish before /nav-move.");
+      if (!isIdle()) {
+        throw new Error("Wait for the current response to finish before /nav-move.");
+      }
       const coordinator = bridge.coordinator(ctx);
       await coordinator.request({ action: "move", dir: args });
       await coordinator.applyPending();
@@ -208,14 +218,18 @@ export function registerSessionMoveTool(
     },
     loadMode: "essential",
     execute: async (id, params, signal, _update, ctx) => {
-      if (ctx.agent.kind !== "main")
+      if (ctx.agent.kind !== "main") {
         throw new Error("Workspace navigation is available only to the main session.");
+      }
       signal?.throwIfAborted();
       bridge.coordinator(ctx).assertDirectToolCall(id);
-      if (!ctx.requestWorkspaceChange)
+      if (!ctx.requestWorkspaceChange) {
         throw new Error("The omp-nav context bridge is unavailable.");
+      }
       const dir = params.dir as string;
-      if (bridge.moveNeedsGrant(dir)) await bridge.grantWorkspaceDirs(ctx, [dir]);
+      if (bridge.moveNeedsGrant(dir)) {
+        await bridge.grantWorkspaceDirs(ctx, [dir]);
+      }
       const result = await ctx.requestWorkspaceChange({ action: "move", dir });
       return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
     },

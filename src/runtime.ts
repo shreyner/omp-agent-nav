@@ -8,8 +8,9 @@ import { type HostNamespace, type RuntimeModules, type SessionLike } from "./typ
 export const SUPPORTED_OMP_VERSIONS: readonly string[] = ["18.11.0", "18.11.1"];
 
 export function findInstalledOmp(executable = Bun.which("omp")): string {
-  if (!executable)
+  if (!executable) {
     throw new Error("omp-agent-nav requires the installed npm omp executable on PATH.");
+  }
   let directory = dirname(realpathSync(executable));
   while (true) {
     const manifest = join(directory, "package.json");
@@ -24,7 +25,9 @@ export function findInstalledOmp(executable = Bun.which("omp")): string {
       }
     }
     const parent = dirname(directory);
-    if (parent === directory) break;
+    if (parent === directory) {
+      break;
+    }
     directory = parent;
   }
   throw new Error(
@@ -94,10 +97,11 @@ const hostedModules: Record<string, () => Promise<unknown>> = {
 export function createRuntime(host: HostNamespace, sourceTestRoot?: string): RuntimeModules {
   const packageRoot = sourceTestRoot ?? findInstalledOmp();
   assertInstalledOmp(packageRoot);
-  if (!sourceTestRoot && !SUPPORTED_OMP_VERSIONS.includes(String(host.VERSION)))
+  if (!sourceTestRoot && !SUPPORTED_OMP_VERSIONS.includes(String(host.VERSION))) {
     throw new Error(
       `omp-agent-nav needs host version from [${SUPPORTED_OMP_VERSIONS.join(", ")}]; found ${String(host.VERSION)}.`,
     );
+  }
   const libraryImport = async <T>(specifier: string): Promise<T> => {
     const target = specifier.startsWith("@")
       ? Bun.resolveSync(specifier, packageRoot)
@@ -111,14 +115,19 @@ export function createRuntime(host: HostNamespace, sourceTestRoot?: string): Run
     host,
     mode: sourceTestRoot ? "source-test" : "host",
     async importModule<T>(specifier: string): Promise<T> {
-      if (sourceTestRoot) return await libraryImport<T>(specifier);
+      if (sourceTestRoot) {
+        return await libraryImport<T>(specifier);
+      }
       // /sdk is a catch-all fallback into source; the root host exposes the actual SDK.
-      if (specifier === "sdk.ts") return host as T;
+      if (specifier === "sdk.ts") {
+        return host as T;
+      }
       const load = hostedModules[specifier];
-      if (!load)
+      if (!load) {
         throw new Error(
           `Unsupported hosted omp module: ${specifier}. A source-state fallback is not permitted.`,
         );
+      }
       return (await load()) as T;
     },
     async importLibraryModule<T>(specifier: string): Promise<T> {
@@ -152,7 +161,9 @@ export async function readSetting(
     lookup(id: string): { get(settings: unknown): unknown } | undefined;
   }>("config/registry.ts");
   const setting = registry.lookup(id);
-  if (!setting) throw new Error(`Unknown omp setting: ${id}`);
+  if (!setting) {
+    throw new Error(`Unknown omp setting: ${id}`);
+  }
   return setting.get(settings);
 }
 
@@ -191,13 +202,16 @@ export async function installInstructionScope(runtime: RuntimeModules): Promise<
   };
   const wrapProviders = () => {
     for (const provider of contextFileCapability.providers) {
-      if (wrapped.has(provider)) continue;
+      if (wrapped.has(provider)) {
+        continue;
+      }
       wrapped.add(provider);
       const load = provider.load;
       provider.load = async function (ctx) {
         const owner = scope.getStore();
-        if (owner && canonical(ctx.cwd) !== canonical(owner.sessionManager.getCwd()))
+        if (owner && canonical(ctx.cwd) !== canonical(owner.sessionManager.getCwd())) {
           return { items: [] };
+        }
         return await load.call(this, ctx);
       };
     }
@@ -207,7 +221,9 @@ export async function installInstructionScope(runtime: RuntimeModules): Promise<
   const mutate = tools.runToolRegistryMutation;
   tools.runToolRegistryMutation = async function (mutation, signal) {
     const owner = scope.getStore() ?? owners.get(this);
-    if (owner) owners.set(this, owner);
+    if (owner) {
+      owners.set(this, owner);
+    }
     wrapProviders();
     return await mutate.call(this, () => (owner ? scope.run(owner, mutation) : mutation()), signal);
   };
@@ -220,7 +236,9 @@ export async function installInstructionScope(runtime: RuntimeModules): Promise<
   const prompt = sessions.prompt;
   sessions.prompt = async function (...args) {
     // Bind before native memory injection so its own rebuild retains recall and the selected scope.
-    if (!bound.has(this)) await this.refreshBaseSystemPrompt();
+    if (!bound.has(this)) {
+      await this.refreshBaseSystemPrompt();
+    }
     return await prompt.apply(this, args);
   };
 }

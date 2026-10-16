@@ -38,7 +38,9 @@ const { Type } = await runtime.importModule<{
 
 const temporary: string[] = [];
 afterEach(async () => {
-  while (temporary.length) await fs.rm(temporary.pop()!, { force: true, recursive: true });
+  while (temporary.length) {
+    await fs.rm(temporary.pop()!, { force: true, recursive: true });
+  }
 });
 
 async function fixture() {
@@ -87,7 +89,9 @@ async function fixture() {
   let definition: ToolDefinitionLike | undefined;
   const pi = {
     registerTool: (tool: ToolDefinitionLike) => {
-      if (tool.name === "session_move") definition = tool;
+      if (tool.name === "session_move") {
+        definition = tool;
+      }
     },
     on: () => {},
     registerCommand: () => {},

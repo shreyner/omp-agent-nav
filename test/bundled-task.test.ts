@@ -10,7 +10,9 @@ async function git(cwd: string, ...args: string[]) {
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
   ]);
-  if (code) throw new Error(error);
+  if (code) {
+    throw new Error(error);
+  }
   return output.trim();
 }
 
@@ -197,15 +199,17 @@ export default async function(pi) {
       new Response(child.stdout).text(),
       new Response(child.stderr).text(),
     ]);
-    if (code || !(await fs.exists(report)))
+    if (code || !(await fs.exists(report))) {
       throw new Error(
         `Configured bundled task fixture failed (${code}): ${stderr}\n${stdout.slice(-4000)}`,
       );
+    }
     const result = JSON.parse(await fs.readFile(report, "utf8"));
-    if (result.fixtureError)
+    if (result.fixtureError) {
       throw new Error(
         `${result.step}: ${result.fixtureError}\n${result.stack}\n${JSON.stringify(result.calls.map((entry: { id: string; cwd: string; model: string; bank: string }) => ({ id: entry.id, cwd: entry.cwd, model: entry.model, bank: entry.bank })))}`,
       );
+    }
     expect(stderr).not.toContain("Failed to load extension");
     expect(result.single.details.results[0].exitCode).toBe(0);
     expect(

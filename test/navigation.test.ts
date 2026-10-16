@@ -15,7 +15,9 @@ import { type HostNamespace } from "../src/types";
 const runtime = createRuntime({} as HostNamespace, findInstalledOmp());
 const temporary: string[] = [];
 afterEach(async () => {
-  while (temporary.length) await fs.rm(temporary.pop()!, { recursive: true, force: true });
+  while (temporary.length) {
+    await fs.rm(temporary.pop()!, { recursive: true, force: true });
+  }
 });
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
@@ -25,7 +27,9 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
     new Response(process.stdout).text(),
     new Response(process.stderr).text(),
   ]);
-  if (code) throw new Error(`git ${args[0]} failed: ${error}`);
+  if (code) {
+    throw new Error(`git ${args[0]} failed: ${error}`);
+  }
   return output.trim();
 }
 
@@ -157,7 +161,9 @@ describe("worktree creation", () => {
     const instrumented: NavigationRuntime = {
       async importModule<T>(specifier: string): Promise<T> {
         const module = await runtime.importModule<any>(specifier);
-        if (specifier !== "@oh-my-pi/pi-natives/vcs") return module;
+        if (specifier !== "@oh-my-pi/pi-natives/vcs") {
+          return module;
+        }
         return {
           ...module,
           git(cwd: string) {
@@ -165,7 +171,7 @@ describe("worktree creation", () => {
             return repo
               ? new Proxy(repo, {
                   get(target, key) {
-                    if (key === "worktreeAdd")
+                    if (key === "worktreeAdd") {
                       return async (
                         location: string,
                         ref: string,
@@ -174,6 +180,7 @@ describe("worktree creation", () => {
                         calls.push(options);
                         return await target.worktreeAdd(location, ref, options);
                       };
+                    }
                     const value = Reflect.get(target, key);
                     return typeof value === "function" ? value.bind(target) : value;
                   },
@@ -319,7 +326,9 @@ describe("worktree creation", () => {
     const instrumented: NavigationRuntime = {
       async importModule<T>(specifier: string): Promise<T> {
         const module = await runtime.importModule<any>(specifier);
-        if (specifier !== "@oh-my-pi/pi-natives/vcs") return module;
+        if (specifier !== "@oh-my-pi/pi-natives/vcs") {
+          return module;
+        }
         return {
           ...module,
           git(cwd: string) {
@@ -327,20 +336,24 @@ describe("worktree creation", () => {
             return repo
               ? new Proxy(repo, {
                   get(target, key) {
-                    if (key === "worktreeAdd")
+                    if (key === "worktreeAdd") {
                       return async (
                         location: string,
                         ref: string,
                         options: Record<string, unknown>,
                       ) => {
-                        if (failAfterCreate) await target.worktreeAdd(location, ref, options);
-                        if (appendForeignExclude)
+                        if (failAfterCreate) {
+                          await target.worktreeAdd(location, ref, options);
+                        }
+                        if (appendForeignExclude) {
                           await fs.appendFile(
                             path.join(target.info().commonDir, "info", "exclude"),
                             "/foreign-entry/\n",
                           );
+                        }
                         throw new Error("injected backend failure");
                       };
+                    }
                     const value = Reflect.get(target, key);
                     return typeof value === "function" ? value.bind(target) : value;
                   },
@@ -375,7 +388,9 @@ describe("worktree creation", () => {
     const instrumented: NavigationRuntime = {
       async importModule<T>(specifier: string): Promise<T> {
         const module = await runtime.importModule<any>(specifier);
-        if (specifier !== "@oh-my-pi/pi-natives/vcs") return module;
+        if (specifier !== "@oh-my-pi/pi-natives/vcs") {
+          return module;
+        }
         return {
           ...module,
           git(cwd: string) {
@@ -383,7 +398,7 @@ describe("worktree creation", () => {
             return repo
               ? new Proxy(repo, {
                   get(target, key) {
-                    if (key === "worktreeAdd")
+                    if (key === "worktreeAdd") {
                       return async (
                         location: string,
                         ref: string,
@@ -396,6 +411,7 @@ describe("worktree creation", () => {
                         );
                         throw new Error("injected failure after foreign edit");
                       };
+                    }
                     const value = Reflect.get(target, key);
                     return typeof value === "function" ? value.bind(target) : value;
                   },
