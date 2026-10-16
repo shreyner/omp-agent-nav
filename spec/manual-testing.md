@@ -1,0 +1,91 @@
+# Ручная проверка с моделью
+
+Запусти обычный `omp` в выбранном рабочем каталоге и вставь один промт ниже. Расширение берётся из глобального config; `-e`, отдельная конфигурация и предварительные shell-команды не нужны.
+Запусти обычный `omp` в выбранном рабочем каталоге и вставь один промт ниже. Расширение берётся из глобального config; `-e`, отдельная конфигурация и предварительные shell-команды не нужны.
+Модель сама создаст одноразовые проекты внутри разрешённого начального каталога и сохранит отчёт. Сценарий **выполнен 2026-10-13** (omp 18.10.3) и **повторён 2026-10-15** (omp 18.11.0): M01–M07 PASS, M08 вне промта; итоги — в таблице ниже и в [verification.md](verification.md#manual-model). Автоматические проверки находятся в [verification.md](verification.md#results).
+
+Отдельный [промт живой проверки approval-диалогов](#approval-prompt) закрывает границу интерактивных подтверждений NAV-08/NAV-09; он требует человека за терминалом. **Выполнен 2026-10-15** (omp 18.11.0): M09-grant/deny/git PASS; M09-wg — грант выдан, но approval-диалог session_move не снят (открытое расхождение); итоги — в таблице ниже и в [verification.md](verification.md#v18).
+
+Fixture `.omp/nav-manual-<runId>` останется в исходном проекте вместе с отчётом, банками, тестовыми ветками и worktree `nav-probes`. Если родительский Git его не игнорирует, он будет виден как untracked; родительские `.gitignore`/exclude сценарий не меняет.
+Явные записи файлов и памяти этого теста ограничены fixture. Обычное хранилище сессии, стартовая память и автоматическое поведение уже запущенного omp продолжают работать по его текущим настройкам.
+
+<a id="prompt"></a>
+## Готовый промт
+
+```text
+Проведи ручной тест omp-agent-nav в этой сессии обычного omp. Сам подготовь тестовые проекты и выполни сценарий; заранее подготовленных папок нет. Не меняй код расширения, global config или установленный omp.
+
+Границы: все явные тестовые записи — только в новом fixture внутри начального разрешённого cwd. Git init/add/commit разрешаю только в synthetic репозиториях этого fixture. Не меняй исходные файлы/ветки/индекс настоящего проекта, его .gitignore или .git/info/exclude. Не читай секреты или пользовательские банки. Не используй memory clear/reset, force, shell git worktree add/remove, shell kill или rm каталога worktree. Не устанавливай зависимости. Сохрани fixture и отчёт после теста.
+
+Пять mutating navigation tools вызывай напрямую и по одному в пакете: session_move, worktree_create, worktree_enter, worktree_exit, worktree_remove. Не объединяй их с read/write/task. Queued — только receipt; дождись developer-result applied/failed/cancelled и проверяй состояние следующим вызовом. Shell pwd без cd и относительные read/write должны показать фактический cwd. Git -C разрешён для проверки конкретного checkout; cd в shell не заменяет session_move.
+
+Не выдавай пересказ за проверку. Для каждого M01…M08 записывай PASS/FAIL/NOT RUN, ожидаемое → фактическое и короткий исходный tool output. Если tool/параметр запрещён или отсутствует, сохрани диагностику и продолжай только независимые безопасные шаги. Не обходи отказ. Не проси человека заранее создавать проекты или закрывать сабагентов: для удаления будет отдельный worktree, в который никто из детей не запускается.
+
+1. M01 — сохрани canonical начальный cwd, omp --version, выбранную модель и session ID, если они доступны штатно. Зафиксируй начальный git status настоящего проекта, если он Git. Проверь наличие session_move, worktree_list/create/enter/exit/remove и поля cwd у task. Если навигационных tools нет, остановись до создания fixture с диагностикой загрузки.
+
+2. Создай новый .omp/nav-manual-<уникальный runId> внутри начального cwd, без переиспользования существующего каталога. В нём создай A/B/C как отдельные synthetic Git-репозитории с initial branch main и одним fixture-коммитом. В каждом: marker.txt=PROJECT_A/B/C; AGENTS.md с соответствующим INSTRUCTION_A/B/C; .omp/agents/nav-probe.md с name nav-probe, description и телом AGENT_A/B/C; .omp/skills/scope-a/b/c/SKILL.md с корректным frontmatter name/description и маркером SKILL_A/B/C; tracked .gitignore со строкой local-only-cache/; dirty.txt с committed baseline. Не копируй туда настоящий проект.
+Проектные .omp/config.yml не задают extensions, model или credentials. Во всех задай memory.backend=mnemopi, mnemopi.dbPath=<абсолютный fixture>/memory/mnemopi.db, mnemopi.bank=<runId>, mnemopi.scoping=per-project, mnemopi.noEmbeddings=true, mnemopi.llmMode=none, mnemopi.autoRecall=false, mnemopi.autoRetain=false, async.enabled=false, task.isolation.enabled=false, autolearn.enabled=false. task.batch=false в A/C и true в B. Используй nested YAML; memory/mnemopi/task/async/autolearn — соответствующие секции, isolation находится внутри task. Fixture-коммиты выполняй с -c commit.gpgsign=false -c user.name="Manual fixture" -c user.email=fixture@example.invalid. После initial commit измени только dirty.txt A и создай untracked.txt A; сохрани их содержимое и git status A как отдельный baseline. Запиши fixture root/runId в FIXTURE.json и запомни canonical пути.
+
+3. M02 — session_move в A, затем в B и обратно в A. После каждого applied выполни pwd без cd и относительный read marker.txt; запиши маркер актуальных инструкций и видимые skills. В B относительным write создай navigation-probe.txt с runId; отдельным вызовом проверь, что файл находится в B и отсутствует в A, затем удали только этот свой файл. После возврата в A dirty.txt/untracked.txt и status должны совпасть с fixture baseline. ID сессии, если получен, должен сохраниться; если не получен, этот подкритерий NOT RUN.
+
+4. M03 — перейди main в B и через два отдельных worktree_create создай новые ветки nav-probes-<runId> и nav-cleanup-<runId>, с точными path .claude/worktree/nav-probes и .claude/worktree/nav-cleanup, без ref. Каждый раз main должен остаться B. Проверь result.path, HEAD=B HEAD, чистоту обоих worktree и записи worktree_list. Tracked .gitignore B должен остаться прежним, git check-ignore -v для файла внутри каждого worktree — показать точное локальное правило из .git/info/exclude. Исходный B должен быть чист. В nav-cleanup никогда не запускай сабагентов: он нужен для независимой проверки безопасного удаления.
+
+5. M04 — main верни в A: task должен получить single-схему. Запусти одиночные task с agent nav-probe, solutionSpace mechanical и cwd сначала B, затем nav-probes. Задание каждому: до любых изменений выполнить pwd, relative read marker.txt, git branch/HEAD; назвать уже видимые INSTRUCTION_*/AGENT_* и skills; сообщить доступность navigation tools; ничего не записывать. Запиши реальные ID/ответы; main остаётся A. Затем перейди main в B: схема task должна стать context + tasks[]. Одним настоящим batch вызовом назначь nav-probe в A (cwd явный), B (cwd не передавать) и nav-probes (cwd явный), с тем же заданием. Ожидаются A/B/WTB и контекст A/B/B; navigation tools у детей недоступны, main остаётся B. Не эмулируй batch одиночными вызовами. Отдельно оцени single, batch и смену схемы.
+
+6. M07 — явная память только fixture, до удаления worktree. В B после applied сверь локальный config: backend=mnemopi, scoping=per-project и абсолютный dbPath внутри fixture. Через retain({"items":[{"content":"<runId> navbank B shared"}]}) сохрани короткий факт. В B используй batch task даже для одного ребёнка: {"context":"M07: читать только временную память B","tasks":[{"agent":"nav-probe","name":"memory-wtb","cwd":"<nav-probes path>","solutionSpace":"mechanical","task":"Выполни recall с query=<runId> navbank B shared и верни фактический ответ; ничего не записывай"}]}. Запиши ID ребёнка и результат recall.
+Войди main в nav-cleanup через worktree_enter; recall({"query":"<runId> navbank B shared"}) должен найти ту же запись. В nav-cleanup сохрани retain({"items":[{"content":"<runId> navbank WT shared"}]}), выйди через worktree_exit в B и проверь recall этой строки. Это общий банк B и двух его worktree. Перейди по очереди в A/C: recall обеих уникальных строк не должен находить записи B. Вернись в B. Не передавай scope: per-project schema его не предлагает. Если нужных memory tools нет или безопасный config не подтверждён, M07=NOT RUN без записи. Не открывай SQLite напрямую и не выдумывай memory_status/memory_save.
+
+7. M05-busy — worktree_list для nav-probes. Если inUse=true, вызов worktree_remove из B должен отказать и сохранить каталог, ветку и данные; запиши точную причину busy. Завершение task/idle ещё не освобождает живую session. Если inUse=false, busy-подкритерий NOT RUN, не создавай занятость искусственно. В любом случае nav-probes сохраняй: не закрывай его детей и не пытайся удалить его в следующих шагах.
+
+8. M05-dirty/enter/exit — nav-cleanup не имеет детей. Войди в него, создай только свой untracked dirty-probe.txt, попробуй worktree_remove: отказ должен сохранить cwd и файл. Выйди через worktree_exit в B и повтори remove: при inUse=false должен быть отказ из-за untracked, файл сохраняется. Если nav-cleanup неожиданно занят, запиши точную причину, не выдавай busy за доказательство dirty-защиты. Удали только свой dirty-probe.txt. Измени marker.txt только nav-cleanup на PROJECT_B_CLEANUP; git -C "<nav-cleanup path>" add -- marker.txt и fixture-коммит с указанными fake identity/gpgsign=false. Сохрани новый HEAD. Primary marker/HEAD B должны остаться прежними.
+
+9. M06 — из primary B проверь worktree_list: nav-cleanup чистый, inUse=false. Удали только его через worktree_remove. Проверь отсутствие каталога/записи, сохранённую ветку nav-cleanup-<runId>, прежний новый HEAD и PROJECT_B_CLEANUP в этом коммите. Nav-probes и его дети остаются. При отказе сохрани диагностику; никаких rm/force. Верни main в A и проверь точную сохранность fixture baseline dirty.txt/untracked.txt/status.
+
+10. Верни main в первоначальный cwd через session_move и проверь pwd. Исходные изменения настоящего проекта должны сохраниться; новый fixture может быть дополнительным untracked, не скрывай его правкой ignore. Сохрани <fixture>/manual-result.md: дата, version/model/session ID при доступности, root/runId, все M01…M08 и подкритерии, actual tool calls/raw outputs, созданные branch/path/child IDs, остатки fixture и ограничения. В ответе дай короткую таблицу и путь отчёта. M08=NOT RUN: async/живой B после main C/park-revive в этом прогоне выключены. LSP, инъекция rollback-ошибок и реальный embeddings transport тоже NOT RUN. Самоописание модели не доказывает внутреннюю загрузку ресурсов; не подменяй им фактические tools/files. Сохранённые nav-probes/ветки/банки и отчёт после проверки удалит человек отдельным решением.
+```
+
+<a id="approval-prompt"></a>
+## Промт живой проверки approval-диалогов
+
+Прогон закрывает границу из [verification.md](verification.md#v18): интерактивные подтверждения `workspace_grant` и `session_move` в живой TUI. Модель не видит сам диалог: текст и факт его появления фиксирует человек, модель — результат вызова. Поэтому перед каждым вызовом, требующим ответа, модель объявляет одну строку-инструкцию и ждёт фактического apply/deny.
+
+```text
+Проведи в этой сессии обычного omp ручную проверку интерактивных подтверждений навигации (NAV-08/NAV-09). Не меняй код расширения, global config или установленный omp. Заранее подготовленных папок нет; тестовую среду создай сам.
+
+Границы: тестовые записи — только новый fixture .omp/nav-approval-<уникальный runId> внутри начального разрешённого cwd и одноразовые каталоги в системном tmp. Git init/commit разрешаю только в synthetic репозиториях fixture. Не меняй файлы/ветки/индекс/ignore настоящего проекта, не читай секреты и пользовательские банки, не используй force, rm, shell git worktree, memory clear/reset, не устанавливай зависимости. Диалоги подтверждения отвечает человек: перед каждым вызовом, где нужен ответ, ровно одной строкой объяви, что сейчас появится диалог и что выбрать; после ответа фиксируй фактический результат tool call. Не обходи отказ. Не выдумывай наблюдения: текст диалога и его отсутствие видит только человек — попроси его подтвердить и внеси в отчёт его слова дословно.
+
+Навигационные tools вызывай напрямую и по одному в пакете. Queued — только receipt; дождись developer-result applied/failed и проверяй состояние следующим вызовом. pwd без cd подтверждает фактический cwd.
+
+1. Зафиксируй начальный cwd, omp --version, модель и session ID штатными средствами. Создай fixture <начальный cwd>/.omp/nav-approval-<runId>, в нём A как отдельный synthetic Git-репозиторий: initial branch main, один fixture-коммит с marker.txt=PROJECT_A (-c commit.gpgsign=false -c user.name="Manual fixture" -c user.email=fixture@example.invalid). Создай три одноразовых пустых каталога в системном tmp: <tmp>/nav-approval-<runId>-grant, -deny и -wg (обычные каталоги, без Git).
+
+2. M09-grant — объяви человеку: сейчас появится диалог session_move для <tmp>/…-grant, выбери approve. Вызови session_move один раз с dir=<tmp>/…-grant. Ожидание: диалог показывает причину «Цель вне принятых workspace-корней» и строку dir: <путь>; после approve queued receipt сменяется applied; pwd показывает tmp-каталог. Вернись session_move в A — диалога быть не должно. Повтори session_move в тот же <tmp>/…-grant — диалога снова быть не должно (корень уже подтверждён), переход applied; вернись в A.
+
+3. M09-deny — объяви: появится диалог для <tmp>/…-deny, выбери deny. Вызови session_move dir=<tmp>/…-deny: вызов не выполняется (отказ пользователя виден в результате tool call), cwd остаётся A. Повтори вызов — диалог должен появиться снова (доказательство, что грант не выдан); человек снова выбирает deny, cwd не меняется.
+
+4. M09-wg — объяви: появится диалог session_move для <tmp>/…-wg, выбери deny. После отказа вызови workspace_grant с dirs=[<tmp>/…-wg] и объяви, что диалог workspace_grant нужно одобрить. Ожидание: granted содержит корень; повторный session_move туда же проходит без диалога и applied. Вернись в A.
+
+5. M09-git — вызови session_move dir=<tmp>/…-grant/.git: диалога быть не должно, вызов завершается прежней ошибкой про Git metadata, cwd остаётся A.
+
+6. Сохрани <fixture>/manual-result.md: дата, version/model/session ID, runId, каждый M09-* как PASS/FAIL/NOT RUN с ожидание → факт, включая дословные слова человека о тексте диалогов (reason, dir) и об отсутствии диалога там, где он не нужен. В ответе дай короткую таблицу и путь отчёта. NOT RUN: M08 и всё вне approval-сценария; одноразовые tmp-каталоги можно оставить.
+```
+
+## Покрытие и результат
+
+| ID | Требования | Проверяемое наблюдение | Статус |
+|---|---|---|---|
+| M01 | NAV-07 | Tools/schema в обычном omp, исходный cwd | PASS 2026-10-13 (ветка fixture `master`; session ID из JSONL) |
+| M02 | NAV-01, NAV-02, NAV-04 | Applied → relative tools A/B/A, файл только в B, сохранность baseline | PASS 2026-10-13 |
+| M03 | WT-01–WT-04 | Два точных path, HEAD/чистота, local exclude, main не переехал | PASS 2026-10-13 (`.gitignore` не изменён; `git check-ignore -v` не выполнялся, exclude подтверждён косвенно чистотой статуса) |
+| M04-single / M04-batch | TASK-01, TASK-02, NAV-03 | Реальные single/batch, cwd/branch/relative read и контекст цели | PASS 2026-10-13 |
+| M05-busy / M05-dirty / M05-enter-exit | WT-05, WT-06 | Busy у nav-probes; отдельные active/dirty отказы у nav-cleanup | PASS 2026-10-13 |
+| M06 | WT-06, NAV-01 | Чистый nav-cleanup удалён, ветка/коммит и исходные данные сохранены | PASS 2026-10-13 |
+| M07 | MEM-01, MEM-02, MEM-03 | Явные retain/recall в fixture; B/два WT общий банк, A/C изолированы | PASS 2026-10-13 |
+| M08 | TASK-03 | Async/main move/park/revive — отдельный будущий ручной прогон | не выполнено, вне этого промта |
+| M09-grant / M09-deny / M09-wg / M09-git | NAV-08, NAV-09 | Диалог session_move вне корней (reason+dir), approve → grant+move, повтор без диалога, deny без гранта, workspace_grant recovery, `.git` без диалога | выполнено 2026-10-15: grant/deny/git PASS; wg — грант выдан (raw `roots`), но approval-диалог не снят — открытое расхождение, [verification.md](verification.md#v18) |
+
+Сценарий использует два worktree, чтобы завершившие task дети не блокировали очистку: `nav-probes` проверяет их target/память и защиту занятого каталога, `nav-cleanup` не получает детей и проверяет чистое удаление. Автоматические результаты не означают, что этот промт уже пройден.
+2026-10-13 прежний отдельный shell/Python-блок подготовки был выполнен в `/private/tmp/omp-nav-manual.a2fm0w2m`; проверены три Git-проекта и их baseline. Это исторический результат прежней инструкции с внешней подготовкой; его результаты не переносятся на новый промт, выполненный отдельно 2026-10-13 (см. [verification.md](verification.md#manual-model)).
+После фактического прогона добавь дату, модель и ссылку на `<fixture>/manual-result.md` в [verification.md](verification.md#manual-model). Каждый повтор — отдельный runId; PASS требует фактического результата, пропуски остаются NOT RUN.
+
+Фактический прогон 2026-10-13: runId `20261013-2ba66a`, fixture `<fixture>`, отчёт `<fixture>/manual-result.md` (реестр 22 applied / 3 expected-failed). В ходе прогона найден и исправлен критический хардкод бюджета MCP-startup перехода (5 с → 30 с в `src/host.ts`/`src/task.ts`, спека синхронизирована; после перезапуска omp все операции applied). Микро-расхождения с промтом перечислены в [verification.md](verification.md#manual-model).
+Фактические прогоны 2026-10-15 (omp 18.11.0): runId `navman-20261015-165628`, полигон `<polygon>`; отчёты `nav-manual/manual-result.md` (S1+M01–M07 PASS, 19 applied / 3 expected-failed, M08 NOT RUN) и `nav-approval/manual-result.md` (M09: grant/deny/git PASS; wg — грант выдан, диалог не снят). Отличия от 18.10.3: префиксы `busy:`/`git:` в отказах `worktree_remove`; пересоздание JSONL сессии с новым UUID при переходах (подкритерий M02 session-id — расхождение).
