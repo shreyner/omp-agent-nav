@@ -5,7 +5,12 @@ import { pathToFileURL } from "node:url";
 
 import { type HostNamespace, type RuntimeModules, type SessionLike } from "./types";
 
-export const SUPPORTED_OMP_VERSIONS: readonly string[] = ["18.11.0", "18.11.1"];
+export const SUPPORTED_OMP_VERSIONS: readonly string[] = [
+  "18.11.0",
+  "18.11.1",
+  "18.11.2",
+  "18.11.3",
+];
 
 export function findInstalledOmp(executable = Bun.which("omp")): string {
   if (!executable) {

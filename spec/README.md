@@ -2,12 +2,12 @@
 
 Агенту требуется менять проект вместе с его инструкциями, инструментами и памятью. Shell `cd` не меняет среду всей сессии и не назначает нужный проект сабагенту.
 
-Реализовано локальное расширение с инструментами навигации/worktree и `task.cwd`, подключаемое через конфигурацию обычного установленного omp версии из проверенной матрицы **18.11.0/18.11.1** (мигрировано с 18.10.3 2026-10-15; матрица — 2026-10-16). Отдельный launcher удалён; копии CLI и правок ядра нет.
+Реализовано локальное расширение с инструментами навигации/worktree и `task.cwd`, подключаемое через конфигурацию обычного установленного omp версии из проверенной матрицы **18.11.0–18.11.3** (мигрировано с 18.10.3 2026-10-15; матрицы — 2026-10-16/17). Отдельный launcher удалён; копии CLI и правок ядра нет.
 При переезде основной сессии загруженные JS/TS extensions/custom tools сохраняются по принятому решению пользователя; остальные проектные ресурсы обновляются. Подробности — [behavior.md](behavior.md#relocation) и [TD-01](tech-debt.md#td-01).
 
 ## Запуск
 
-Требуются клон этого репозитория, bun ≥ 1.3.14 и установленный `@oh-my-pi/pi-coding-agent` версии из проверенной матрицы (18.11.0, 18.11.1; `npm i -g @oh-my-pi/pi-coding-agent@<version>`) с обычным `omp` в PATH. Добавь путь расширения от клона в существующий список `extensions` глобального `~/.omp/agent/config.yml`:
+Требуются клон этого репозитория, bun ≥ 1.3.14 и установленный `@oh-my-pi/pi-coding-agent` версии из проверенной матрицы (18.11.0–18.11.3; `npm i -g @oh-my-pi/pi-coding-agent@<version>`) с обычным `omp` в PATH. Добавь путь расширения от клона в существующий список `extensions` глобального `~/.omp/agent/config.yml`:
 
 ```yaml
 extensions:
@@ -41,6 +41,7 @@ Checkout `upstream/oh-my-pi` используется только для чте
 2026-10-16 (0.2.0): матрица проверенных версий omp (18.11.0, 18.11.1) — `SUPPORTED_OMP_VERSIONS` в [runtime.ts](../src/runtime.ts), runner [bin/matrix.ts](../bin/matrix.ts); обе версии PASS за 49.86 s / 50.30 s — [V19](verification.md#v19). Пакет — локальный приватный git-репозиторий без remote, установка на другую машину — клоном (раздел «Запуск» выше).
 2026-10-16 (тулинг): внедрён Biome 2.5.15 — [biome.json](../biome.json) и скрипты `lint`/`lint:fix`/`fix:unsafe`/`format`/`format:check`/`matrix` в package.json; `check` теперь сборка + biome-гейт. Dev-зависимость единственная — `@biomejs/biome`, omp объявлен optional peer, хост в `node_modules` не попадает. Разовый reformat по src/test/bin верифицирован полным прогоном (69 pass, 0 fail, 802 expect() calls, 50.04 s); lint и check — Exit 0.
 2026-10-16 (строгий стиль): Biome ужесточён (`useBlockStatements`, cognitive-бюджет 15, `useSortedInterfaceMembers`) — 247 автофиксов скобок, 6 сверхсложных функций декомпозированы, host.ts (1212 строк) разрезан на [src/host/](../src/host) (`bridge`/`coordinator`/`grants`/`mcp`) с тонким реэкспортом в [src/host.ts](../src/host.ts); lint/check — 0 нарушений, итоговый прогон 69 pass / 0 fail / 802 expect() calls / 49.51 s.
+2026-10-17: матрица расширена до 18.11.2/18.11.3 после обновления глобального omp пользователя до 18.11.3; `bun bin/matrix.ts` — все четыре версии PASS (49/50/52/50 s, суммарно 265.50 s), полный прогон на глобальном 18.11.3 — **69 pass / 0 fail / 804 expect() calls / 51.38 s** — [V19](verification.md#v19). Breaking change 18.11.3 `ui.approve()` (`"once" | "session" | "deny"` вместо boolean) расширение не задевает: используются только декларативные approval-уровни инструментов.
 Проверены обычный config print, TUI/RPC/LSP, реальные вызовы task через fake provider, main move/park/revive и собственная память расширения. Source-test harness отдельно покрывает штатные классы и инъекции ошибок. V1 проверена в описанных границах.
 Глобальное подключение и обычный запуск проверены отдельно; [ручной прогон с моделью](manual-testing.md#prompt) выполнен 2026-10-13 и повторён 2026-10-15 на omp 18.11.0 (S1+M01–M07 PASS, M08 вне промта); [живые approval-диалоги](manual-testing.md#approval-prompt) проверены 2026-10-15 (M09: grant/deny/git PASS; грант `workspace_grant` не снимает диалог session_move — открытое расхождение, [V18](verification.md#v18)). Записи и пути отчётов — в [manual-testing.md](manual-testing.md) и [verification.md](verification.md#manual-model).
 Коммерческий провайдер в автоматических сценариях не использовался.
