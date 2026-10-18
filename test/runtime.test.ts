@@ -30,23 +30,39 @@ test("discovers the installed npm package and imports its native/source modules 
   expect(runtime.mode).toBe("source-test");
 });
 
-test("rejects versions outside the matrix and accepts every supported manifest without source CLI", async () => {
+test("accepts verified and newer same-major hosts, rejects older, next-major and non-semver", async () => {
   const directory = await fs.mkdtemp(join(tmpdir(), "omp-nav-runtime-"));
   temporary.push(directory);
-  await fs.writeFile(
-    join(directory, "package.json"),
-    JSON.stringify({ name: "@oh-my-pi/pi-coding-agent", version: "19.0.0" }),
-  );
-  expect(() => assertInstalledOmp(directory)).toThrow(
-    `omp-agent-nav supports @oh-my-pi/pi-coding-agent ${SUPPORTED_OMP_VERSIONS.join(", ")}; found @oh-my-pi/pi-coding-agent 19.0.0.`,
-  );
-  for (const version of SUPPORTED_OMP_VERSIONS) {
+  const manifest = async (version: string) => {
     await fs.writeFile(
       join(directory, "package.json"),
       JSON.stringify({ name: "@oh-my-pi/pi-coding-agent", version }),
     );
-    expect(() => assertInstalledOmp(directory)).not.toThrow();
+  };
+  await manifest("19.0.0");
+  expect(() => assertInstalledOmp(directory)).toThrow(
+    `omp-agent-nav supports @oh-my-pi/pi-coding-agent >= ${SUPPORTED_OMP_VERSIONS[0]} and below 19.0.0 (verified: ${SUPPORTED_OMP_VERSIONS.join(", ")}); found @oh-my-pi/pi-coding-agent 19.0.0.`,
+  );
+  for (const version of ["18.10.9", "18.13.0-dev", "garbage"]) {
+    await manifest(version);
+    expect(() => assertInstalledOmp(directory)).toThrow(
+      `found @oh-my-pi/pi-coding-agent ${version}.`,
+    );
   }
+  const warnings: unknown[] = [];
+  const originalWarn = console.warn;
+  console.warn = (message: unknown) => warnings.push(message);
+  try {
+    for (const version of [...SUPPORTED_OMP_VERSIONS, "18.12.2", "18.99.0"]) {
+      await manifest(version);
+      expect(() => assertInstalledOmp(directory)).not.toThrow();
+    }
+  } finally {
+    console.warn = originalWarn;
+  }
+  expect(warnings.filter((warning) => String(warning).includes("18.12.2 is newer"))).toHaveLength(
+    1,
+  );
 });
 
 test("ordinary installed CLI passes its version smoke check", async () => {

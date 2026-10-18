@@ -10,7 +10,46 @@ export const SUPPORTED_OMP_VERSIONS: readonly string[] = [
   "18.11.1",
   "18.11.2",
   "18.11.3",
+  "18.12.0",
+  "18.12.1",
 ];
+// Политика версий (2026-10-18): принимаем любой хост >= floor в том же major,
+// что и последняя проверенная версия; непроверенные грузятся с warning,
+// ниже floor / следующий major / не-semver — отказ.
+const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/;
+const MIN_VERSION = SUPPORTED_OMP_VERSIONS[0] ?? "";
+const NEXT_MAJOR = Number(SUPPORTED_OMP_VERSIONS.at(-1)?.split(".")[0]) + 1;
+const NEXT_MAJOR_VERSION = `${NEXT_MAJOR}.0.0`;
+
+function versionRank(version: string): number | null {
+  const match = VERSION_PATTERN.exec(version);
+  if (!match) {
+    return null;
+  }
+  return Number(match[1]) * 1_000_000 + Number(match[2]) * 1_000 + Number(match[3]);
+}
+
+function versionStatus(version: string): "verified" | "unverified" | "rejected" {
+  if (SUPPORTED_OMP_VERSIONS.includes(version)) {
+    return "verified";
+  }
+  const rank = versionRank(version);
+  const floor = versionRank(MIN_VERSION);
+  if (rank === null || floor === null || rank < floor || rank >= NEXT_MAJOR * 1_000_000) {
+    return "rejected";
+  }
+  return "unverified";
+}
+
+let warnedUnverifiedHost = false;
+function warnUnverifiedHost(version: string): void {
+  if (!warnedUnverifiedHost) {
+    warnedUnverifiedHost = true;
+    console.warn(
+      `omp-agent-nav: host ${version} is newer than the verified matrix (${SUPPORTED_OMP_VERSIONS.join(", ")}); loading unverified.`,
+    );
+  }
+}
 
 export function findInstalledOmp(executable = Bun.which("omp")): string {
   if (!executable) {
@@ -45,13 +84,14 @@ export function assertInstalledOmp(packageRoot: string): void {
     name?: string;
     version?: string;
   };
-  if (
-    manifest.name !== "@oh-my-pi/pi-coding-agent" ||
-    !SUPPORTED_OMP_VERSIONS.includes(manifest.version ?? "")
-  ) {
+  const status = versionStatus(manifest.version ?? "");
+  if (manifest.name !== "@oh-my-pi/pi-coding-agent" || status === "rejected") {
     throw new Error(
-      `omp-agent-nav supports @oh-my-pi/pi-coding-agent ${SUPPORTED_OMP_VERSIONS.join(", ")}; found ${manifest.name ?? "unknown"} ${manifest.version ?? "unknown"}.`,
+      `omp-agent-nav supports @oh-my-pi/pi-coding-agent >= ${MIN_VERSION} and below ${NEXT_MAJOR_VERSION} (verified: ${SUPPORTED_OMP_VERSIONS.join(", ")}); found ${manifest.name ?? "unknown"} ${manifest.version ?? "unknown"}.`,
     );
+  }
+  if (status === "unverified") {
+    warnUnverifiedHost(manifest.version ?? "");
   }
 }
 
@@ -102,10 +142,16 @@ const hostedModules: Record<string, () => Promise<unknown>> = {
 export function createRuntime(host: HostNamespace, sourceTestRoot?: string): RuntimeModules {
   const packageRoot = sourceTestRoot ?? findInstalledOmp();
   assertInstalledOmp(packageRoot);
-  if (!sourceTestRoot && !SUPPORTED_OMP_VERSIONS.includes(String(host.VERSION))) {
-    throw new Error(
-      `omp-agent-nav needs host version from [${SUPPORTED_OMP_VERSIONS.join(", ")}]; found ${String(host.VERSION)}.`,
-    );
+  if (!sourceTestRoot) {
+    const hostStatus = versionStatus(String(host.VERSION));
+    if (hostStatus === "rejected") {
+      throw new Error(
+        `omp-agent-nav needs host version >= ${MIN_VERSION} and below ${NEXT_MAJOR_VERSION}; found ${String(host.VERSION)}.`,
+      );
+    }
+    if (hostStatus === "unverified") {
+      warnUnverifiedHost(String(host.VERSION));
+    }
   }
   const libraryImport = async <T>(specifier: string): Promise<T> => {
     const target = specifier.startsWith("@")
