@@ -93,16 +93,14 @@ export interface InteractiveOwner {
 export interface ExtensionContextLike {
   agent: { id: string; kind: "main" | "sub"; [key: string]: unknown };
   cwd: string;
-  listWorktrees?: () => Promise<unknown>;
   mode: string;
-  requestWorkspaceChange?: (request: WorkspaceRequest) => Promise<WorkspaceResult>;
   sessionManager: SessionManagerLike;
   [key: string]: unknown;
 }
 
 export interface HostNamespace {
   AgentRegistry: { global(): { get(id: string): RegistryRef | undefined; list(): RegistryRef[] } };
-  ExtensionRunner: { prototype: { createContext(...args: unknown[]): ExtensionContextLike } };
+  ExtensionRunner: { prototype: object };
   InteractiveMode: { prototype: InteractiveOwner };
   [key: string]: unknown;
 }

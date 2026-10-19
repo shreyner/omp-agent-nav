@@ -139,6 +139,9 @@ import { createMockModel } from "@oh-my-pi/pi-ai/providers/mock";
 import { registerCustomApi } from "@oh-my-pi/pi-ai/api-registry";
 import { InternalUrlRouter } from "@oh-my-pi/pi-coding-agent/internal-urls/router";
 export default async function(pi) {
+  const { createRuntime } = await import(${JSON.stringify(join(import.meta.dir, "..", "src", "runtime.ts"))});
+  const { installHostBridge } = await import(${JSON.stringify(join(import.meta.dir, "..", "src", "host.ts"))});
+  const bridge = await installHostBridge(createRuntime(pi.pi));
   const calls = () => fsSync.existsSync(${JSON.stringify(callsPath)}) ? fsSync.readFileSync(${JSON.stringify(callsPath)}, "utf8").trim().split("\\n").map(JSON.parse) : [];
   const mainCalls = () => calls().filter(context => !JSON.stringify(context.systemPrompt).includes("SCOPE_CHILD_B_UNIQUE"));
   const lastCall = () => mainCalls().at(-1);
@@ -164,28 +167,28 @@ export default async function(pi) {
     await session.prompt("Use the registered navigation tool to move to B, then check its context.");
     if (!lastCall()) throw new Error("Fake provider was not reached: " + JSON.stringify({ taskResult, model: session.model, messages: session.agent.state.messages }));
     const after = { id: ctx.sessionManager.getSessionId(), cwd: ctx.sessionManager.getCwd(), file: ctx.sessionManager.getSessionFile(), prompt: lastCall().systemPrompt, messages: lastCall().messages };
-    await ctx.requestWorkspaceChange({ action: "move", dir: ${JSON.stringify(cwd)} });
+    await bridge.coordinator(ctx).request({ action: "move", dir: ${JSON.stringify(cwd)} });
     await session.prompt("Check return with local fake provider.");
     const returned = { id: ctx.sessionManager.getSessionId(), cwd: ctx.sessionManager.getCwd(), file: ctx.sessionManager.getSessionFile(), prompt: lastCall().systemPrompt };
     await fs.unlink(${JSON.stringify(join(destination, ".omp", "SYSTEM.md"))});
-    await ctx.requestWorkspaceChange({ action: "move", dir: ${JSON.stringify(destination)} });
+    await bridge.coordinator(ctx).request({ action: "move", dir: ${JSON.stringify(destination)} });
     await session.prompt("Check destination default prompt.");
     const defaultPrompt = lastCall().systemPrompt;
-    await ctx.requestWorkspaceChange({ action: "move", dir: ${JSON.stringify(cwd)} });
+    await bridge.coordinator(ctx).request({ action: "move", dir: ${JSON.stringify(cwd)} });
     await session.prompt("Return before template test.");
     await fs.writeFile(${JSON.stringify(join(destination, ".omp", "SYSTEM_TEMPLATE.md"))}, "TEMPLATE_B_UNIQUE in {{cwd}} with {{#each tools}}{{this}} {{/each}} MODEL={{model}} TREE={{includeWorkspaceTree}} SCOUT={{scoutAvailable}} IRC={{taskIrcEnabled}} QA={{autoQaEnabled}} APPEND={{appendPrompt}} PERSONALITY={{personality}} URLS={{#each internalUrls}}{{this}} {{/each}}");
-    await ctx.requestWorkspaceChange({ action: "move", dir: ${JSON.stringify(destination)} });
+    await bridge.coordinator(ctx).request({ action: "move", dir: ${JSON.stringify(destination)} });
     await session.prompt("Check destination template.");
     const templatePrompt = lastCall().systemPrompt;
-    await ctx.requestWorkspaceChange({ action: "move", dir: ${JSON.stringify(cwd)} });
+    await bridge.coordinator(ctx).request({ action: "move", dir: ${JSON.stringify(cwd)} });
     await session.prompt("Return before factory scope test.");
     await fs.unlink(${JSON.stringify(join(destination, ".omp", "SYSTEM_TEMPLATE.md"))});
     await fs.mkdir(${JSON.stringify(join(destination, ".omp", "tools"))}, { recursive: true });
     await fs.writeFile(${JSON.stringify(join(destination, ".omp", "tools", "destination-tool.ts"))}, "export default () => ({ name: 'destination_only' });");
-    await ctx.requestWorkspaceChange({ action: "move", dir: ${JSON.stringify(destination)} });
+    await bridge.coordinator(ctx).request({ action: "move", dir: ${JSON.stringify(destination)} });
     await session.prompt("Check safe refusal with local fake provider.");
     const refused = { cwd: ctx.sessionManager.getCwd(), file: ctx.sessionManager.getSessionFile(), messages: lastCall().messages };
-    await fs.writeFile(${JSON.stringify(report)}, JSON.stringify({ bridge: typeof ctx.requestWorkspaceChange === "function", matched: ref?.session?.sessionManager === ctx.sessionManager, tools: pi.getActiveTools(), before, after, returned, defaultPrompt, templatePrompt, refused, fakeCalls: mainCalls().length, childContexts: calls().filter(context => JSON.stringify(context.systemPrompt).includes("SCOPE_CHILD_B_UNIQUE")).map(context => context.systemPrompt), taskResult }));
+    await fs.writeFile(${JSON.stringify(report)}, JSON.stringify({ matched: ref?.session?.sessionManager === ctx.sessionManager, tools: pi.getActiveTools(), before, after, returned, defaultPrompt, templatePrompt, refused, fakeCalls: mainCalls().length, childContexts: calls().filter(context => JSON.stringify(context.systemPrompt).includes("SCOPE_CHILD_B_UNIQUE")).map(context => context.systemPrompt), taskResult }));
   } });
 }`,
   );
@@ -238,7 +241,6 @@ export default async function(pi) {
   expect(stderr).not.toContain("Failed to load extension");
   expect(stdout).not.toContain("FAKE_PROVIDER_FALLBACK");
   const result = JSON.parse(await fs.readFile(report, "utf8"));
-  expect(result.bridge).toBe(true);
   expect(result.matched).toBe(true);
   expect(result.tools).toContain("session_move");
   expect(result.tools).toContain("task");
@@ -384,7 +386,10 @@ import * as Registry from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import * as Task from "@oh-my-pi/pi-coding-agent/task";
 import * as Capability from "@oh-my-pi/pi-coding-agent/capability";
 import * as Utils from "@oh-my-pi/pi-utils";
-export default function(pi) {
+export default async function(pi) {
+  const { createRuntime } = await import(${JSON.stringify(join(import.meta.dir, "..", "src", "runtime.ts"))});
+  const { installHostBridge } = await import(${JSON.stringify(join(import.meta.dir, "..", "src", "host.ts"))});
+  const bridge = await installHostBridge(createRuntime(pi.pi));
   const mock = createMockModel({ id: "fixture", provider: "nav-fixture", handler: () => ({ content: ["local fixture complete"] }) });
   pi.registerProvider("nav-fixture", { api: "nav-fixture-api", apiKey: "test-unused", baseUrl: "mock://", streamSimple: (_model, context, options) => mock.stream(mock, context, options), models: [{ id: "fixture", name: "Fixture", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 200000, maxTokens: 32000 }] });
   pi.on("session_start", () => { registerCustomApi("nav-fixture-api", (_model, context, options) => mock.stream(mock, context, options), "nav-fixture-test", (_model, context, options) => mock.stream(mock, context, options)); });
@@ -392,26 +397,26 @@ export default function(pi) {
     const session = pi.pi.AgentRegistry.global().get(ctx.agent.id).session;
     const identities = { registry: Registry.AgentRegistry === pi.pi.AgentRegistry, task: Task.TaskTool === pi.pi.TaskTool, settings: Capability.boundSettings() === session.settings, utils: Utils.getAgentDir === pi.pi.getAgentDir };
     const before = { id: ctx.sessionManager.getSessionId(), cwd: ctx.sessionManager.getCwd(), file: ctx.sessionManager.getSessionFile() };
-    await ctx.requestWorkspaceChange({ action: "create", branch: "managed-fixture" });
+    await bridge.coordinator(ctx).request({ action: "create", branch: "managed-fixture" });
     await session.prompt("Apply managed creation with local provider.");
-    const first = (await ctx.listWorktrees()).find(entry => entry.branch === "managed-fixture");
+    const first = (await bridge.coordinator(ctx).navigation.listWorktrees()).find(entry => entry.branch === "managed-fixture");
     const afterCreate = { cwd: ctx.sessionManager.getCwd(), file: ctx.sessionManager.getSessionFile() };
-    await ctx.requestWorkspaceChange({ action: "create", branch: "exact-fixture", path: ".claude/worktree/exact-fixture" });
+    await bridge.coordinator(ctx).request({ action: "create", branch: "exact-fixture", path: ".claude/worktree/exact-fixture" });
     await session.prompt("Apply exact creation with local provider.");
-    const second = (await ctx.listWorktrees()).find(entry => entry.branch === "exact-fixture");
+    const second = (await bridge.coordinator(ctx).navigation.listWorktrees()).find(entry => entry.branch === "exact-fixture");
     if (!first || !second) throw new Error("Expected both created worktrees: " + JSON.stringify(session.agent.state.messages));
     const cleanContents = await fs.readFile(second.path + "/tracked.txt", "utf8");
-    await ctx.requestWorkspaceChange({ action: "enter", path: second.path });
+    await bridge.coordinator(ctx).request({ action: "enter", path: second.path });
     await session.prompt("Enter exact worktree.");
     const entered = ctx.sessionManager.getCwd();
-    await ctx.requestWorkspaceChange({ action: "exit" });
+    await bridge.coordinator(ctx).request({ action: "exit" });
     await session.prompt("Return primary.");
     const returned = ctx.sessionManager.getCwd();
     for (const entry of [first, second]) {
-      await ctx.requestWorkspaceChange({ action: "remove", path: entry.path });
+      await bridge.coordinator(ctx).request({ action: "remove", path: entry.path });
       await session.prompt("Remove clean inactive fixture.");
     }
-    await fs.writeFile(${JSON.stringify(report)}, JSON.stringify({ before, afterCreate, first, second, cleanContents, entered, returned, remaining: await ctx.listWorktrees(), identities, id: ctx.sessionManager.getSessionId(), messages: session.agent.state.messages }));
+    await fs.writeFile(${JSON.stringify(report)}, JSON.stringify({ before, afterCreate, first, second, cleanContents, entered, returned, remaining: await bridge.coordinator(ctx).navigation.listWorktrees(), identities, id: ctx.sessionManager.getSessionId(), messages: session.agent.state.messages }));
   }});
 }`,
   );

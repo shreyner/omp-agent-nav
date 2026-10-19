@@ -80,11 +80,9 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
           throw new Error("Workspace navigation is available only to the main session.");
         }
         signal?.throwIfAborted();
-        bridge.coordinator(ctx).assertDirectToolCall(id);
-        if (!ctx.requestWorkspaceChange) {
-          throw new Error("The omp-nav context bridge is unavailable.");
-        }
-        const result = await ctx.requestWorkspaceChange(tool.request(params));
+        const coordinator = bridge.coordinator(ctx);
+        coordinator.assertDirectToolCall(id);
+        const result = await coordinator.request(tool.request(params), signal);
         return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
       },
     });
@@ -99,10 +97,7 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
     approval: "read",
     loadMode: "essential",
     execute: async (_id, _params, _signal, _update, ctx) => {
-      if (!ctx.listWorktrees) {
-        throw new Error("The omp-nav context bridge is unavailable.");
-      }
-      const result = await ctx.listWorktrees();
+      const result = await bridge.coordinator(ctx).navigation.listWorktrees();
       return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
     },
   });
@@ -249,10 +244,8 @@ export function registerSessionMoveTool(
         throw new Error("Workspace navigation is available only to the main session.");
       }
       signal?.throwIfAborted();
-      bridge.coordinator(ctx).assertDirectToolCall(id);
-      if (!ctx.requestWorkspaceChange) {
-        throw new Error("The omp-nav context bridge is unavailable.");
-      }
+      const coordinator = bridge.coordinator(ctx);
+      coordinator.assertDirectToolCall(id);
       const dir = params.dir as string;
       // Only a root the approval dialog showed is granted; a target that changed since approval
       // gets no grant and fails validation with the usual workspace_grant hint.
@@ -260,7 +253,7 @@ export function registerSessionMoveTool(
       if (approved !== undefined && bridge.moveNeedsGrant(dir)) {
         await bridge.grantWorkspaceDirs(ctx, [dir], [approved]);
       }
-      const result = await ctx.requestWorkspaceChange({ action: "move", dir });
+      const result = await coordinator.request({ action: "move", dir }, signal);
       return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
     },
   });

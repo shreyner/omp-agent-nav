@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { WorkspaceBridge, type WorkspaceCoordinator, WorkspaceGrantState } from "../src/host";
+import { WorkspaceBridge, WorkspaceGrantState } from "../src/host";
 import { registerSessionMoveTool, registerWorkspaceGrantTool } from "../src/index";
 import { NavigationError } from "../src/navigation";
 import { createRuntime, findInstalledOmp } from "../src/runtime";
@@ -14,7 +14,6 @@ import {
   type SessionLike,
   type ToolCallContext,
   type ToolDefinitionLike,
-  type WorkspaceRequest,
 } from "../src/types";
 
 const runtime = createRuntime({} as HostNamespace, findInstalledOmp());
@@ -81,13 +80,11 @@ async function fixture() {
     AgentRegistry: { global: () => ({ get: () => refs[0], list: () => refs }) },
   } as unknown as HostNamespace;
   const bridge = new WorkspaceBridge({ ...runtime, host });
-  let coordinator!: WorkspaceCoordinator;
   const ctx = {
     agent: { id: "main", kind: "main" },
     sessionManager: manager,
-    requestWorkspaceChange: (request: WorkspaceRequest) => coordinator.request(request),
   } as unknown as ExtensionContextLike;
-  coordinator = bridge.coordinator(ctx);
+  const coordinator = bridge.coordinator(ctx);
   const tools = new Map<string, ToolDefinitionLike>();
   const pi = {
     registerTool: (tool: ToolDefinitionLike) => {

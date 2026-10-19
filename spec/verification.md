@@ -120,7 +120,7 @@ Print также прошёл A default → B text override → A default → B 
 ### V03. Смешанные пакеты, вложенные вызовы и сабагенты
 
 **NAV-03.** [host.test.ts](../test/host.test.ts), [integration-modes.test.ts](../test/integration-modes.test.ts).
-Проверка агента блокирует весь move+write пакет до эффекта; вложенный tool ID не допускается. Context depth/kind повторно ограничивают API; tools навигации удалены у сабагента.
+Проверка агента блокирует весь move+write пакет до эффекта; вложенный tool ID не допускается; tools навигации удалены у сабагента. До 2026-10-19 context depth/kind дополнительно ограничивали context API (NAV-07, снято).
 Интеграционный тест подтвердил отсутствие тестового write-файла после смешанного пакета в реальных TUI/RPC.
 
 <a id="v04"></a>
@@ -142,7 +142,7 @@ Print также прошёл A default → B text override → A default → B 
 <a id="v06"></a>
 ### V06. TUI, print, RPC и version bridge
 
-**NAV-07.** [runtime.test.ts](../test/runtime.test.ts), [integration-modes.test.ts](../test/integration-modes.test.ts).
+**Режимы omp** (до 2026-10-19 — и NAV-07). [runtime.test.ts](../test/runtime.test.ts), [integration-modes.test.ts](../test/integration-modes.test.ts). С 2026-10-19 фикстуры ставят запросы через `bridge.coordinator(ctx)`, а не через context API.
 Print, TUI и RPC запускаются обычным установленным `omp` с extension из временной конфигурации. Реальный TUI работает в PTY, RPC — дочерний процесс со штатным JSON protocol; fake provider выполняет зарегистрированные tools.
 Конфигурационная загрузка файла и каталога пакета прошла; TUI/RPC context/BTW/LSP и сохранённый заголовок JSONL подтвердили единый контракт. Несовместимая версия отклоняется; runtime не требует `src/cli.ts` и не запускает его.
 2026-10-19 (EXT-16): хост, чья версия отличается от omp в PATH, отклоняется сообщением «differs from the running omp» — [runtime.test.ts](../test/runtime.test.ts).

@@ -31,20 +31,13 @@ Queued create ещё не означает, что каталог и ветка 
 Navigation различает invalid, unavailable, permission, conflict, git и busy. Неполный rollback записывает обе ошибки и фактический cwd, затем останавливает следующий запрос провайдеру.
 
 <a id="core-api"></a>
-## Context API bridge
+## Context API bridge (NAV-07, снято)
 
-Расширение добавляет методы в context через обёртку `ExtensionRunner.createContext` в памяти процесса (NAV-07):
+До 2026-10-19 расширение добавляло в context методы `ctx.requestWorkspaceChange` и `ctx.listWorktrees` через обёртку `ExtensionRunner.createContext`. Их вызывали только собственные инструменты и команды расширения, у которых bridge и так есть в замыкании, поэтому обёртку удалили. ID NAV-07 не переиспользуется.
 
-```ts
-ctx.requestWorkspaceChange({ action: "move", dir: "/workspace/B" })
-ctx.listWorktrees()
-```
-
-Union запросов: `{action:"move",dir}`, `{action:"create",branch,path?,ref?}`, `{action:"enter",path}`, `{action:"exit"}`, `{action:"remove",path}`.
-Request возвращает queued receipt; list читает реестр сразу. Это локальный bridge API, не опубликованное изменение типов upstream omp.
-Пример request допустим для main command/event context без tool delegation. Из tool execute изменение может запрашивать только один из шести зарегистрированных navigation tools после проверки одиночного пакета; произвольный custom tool получает отказ.
-Вложенная глубина делегирования отклоняется независимо от имени инструмента. List также проверяет основную сессию, но не ставит мутацию в очередь.
-TUI, print и RPC используют тот же coordinator; результаты проверки режимов находятся в [V06](verification.md#v06).
+Инструменты и `/nav-move` ставят запрос в coordinator основной сессии напрямую: `bridge.coordinator(ctx).request(...)`, список читает `coordinator.navigation.listWorktrees()`.
+Union запросов: `{action:"move",dir}`, `{action:"create",branch,path?,ref?}`, `{action:"enter",path}`, `{action:"exit"}`, `{action:"remove",path}`. Request возвращает queued receipt; list читает реестр сразу.
+Вложенный вызов изменяющего инструмента отсекает допуск по tool ID ([пакеты](#batch)); `worktree_list` только читает. TUI, print и RPC используют тот же coordinator — [V06](verification.md#v06).
 
 <a id="batch"></a>
 ## Одиночный пакет и сабагенты

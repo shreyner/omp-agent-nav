@@ -16,7 +16,7 @@ import {
   type RuntimeModules,
   type SessionLike,
 } from "../types";
-import { NAVIGATION_TOOLS, WorkspaceCoordinator } from "./coordinator";
+import { WorkspaceCoordinator } from "./coordinator";
 import { type GrantManager, WorkspaceGrantState, WorkspaceRollbackError } from "./grants";
 import { type RescopableSession, rescopeProjectMcp } from "./mcp";
 
@@ -885,7 +885,6 @@ export async function installHostBridge(runtime: RuntimeModules): Promise<Worksp
 
 async function createHostBridge(runtime: RuntimeModules): Promise<WorkspaceBridge> {
   const host: HostNamespace = runtime.host;
-  const prototype = host.ExtensionRunner.prototype;
   const registry = await runtime.importModule<{ AgentRegistry: HostNamespace["AgentRegistry"] }>(
     "registry/agent-registry.ts",
   );
@@ -911,29 +910,6 @@ async function createHostBridge(runtime: RuntimeModules): Promise<WorkspaceBridg
     return args.conversationKey?.startsWith("btw:")
       ? await bridge.runBtw(this, () => ephemeral.call(this, args))
       : await ephemeral.call(this, args);
-  };
-  const createContext = prototype.createContext;
-  prototype.createContext = function (...args: unknown[]) {
-    const ctx = createContext.apply(this, args);
-    const delegation = args[1] as
-      | { toolName: string; depth?: number; signal?: AbortSignal }
-      | undefined;
-    const assertTopLevel = () => {
-      if ((delegation?.depth ?? 0) > 0) {
-        throw new Error(
-          "Nested workspace navigation is not supported; call the navigation tool directly in a solo batch.",
-        );
-      }
-      return bridge.coordinator(ctx);
-    };
-    ctx.requestWorkspaceChange = async (request) => {
-      if (delegation && !NAVIGATION_TOOLS.has(delegation.toolName)) {
-        throw new Error("Workspace changes must be requested through a direct navigation tool.");
-      }
-      return await assertTopLevel().request(request, delegation?.signal);
-    };
-    ctx.listWorktrees = async () => await assertTopLevel().navigation.listWorktrees();
-    return ctx;
   };
   const interactive = host.InteractiveMode.prototype;
   const originalInit = interactive.init;

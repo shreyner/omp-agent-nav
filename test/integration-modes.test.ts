@@ -114,19 +114,19 @@ export default async function(pi) {
     try {
     if (startupError) throw startupError;
     session = pi.pi.AgentRegistry.global().get(ctx.agent.id).session;
-    const results = { mode: ctx.mode, api: typeof ctx.requestWorkspaceChange === "function" && typeof ctx.listWorktrees === "function", ownerMatches: owner?.session === session };
+    const results = { mode: ctx.mode, ownerMatches: owner?.session === session };
     const tool = async (name, args) => {
       await fs.writeFile(${JSON.stringify(nextToolsPath)}, JSON.stringify([{ type: "toolCall", name, arguments: { ...args, i: "Run this isolated navigation integration check." } }]));
       await session.prompt("Run the next fixture tool.");
       const messages = lastCall().messages;
       return messages.filter(message => message.role === "toolResult").at(-1);
     };
-    const move = async dir => { let receipt; let error; try { receipt = await ctx.requestWorkspaceChange({ action: "move", dir }); } catch (failure) { error = String(failure); } await session.prompt("Apply fixture context transition."); return { receipt, error, state: await snapshot() }; };
+    const move = async dir => { let receipt; let error; try { receipt = await bridge.coordinator(ctx).request({ action: "move", dir }); } catch (failure) { error = String(failure); } await session.prompt("Apply fixture context transition."); return { receipt, error, state: await snapshot() }; };
     results.before = await snapshot();
     if (ctx.mode === "tui") await owner.handleBtwCommand("BTW_HELD_INTEGRATION");
     { const deadline = Date.now() + 5000; while (!await fs.exists(${JSON.stringify(btwStartedPath)})) { if (Date.now() > deadline) throw new Error("BTW fake provider did not start"); await Bun.sleep(5); } }
     try {
-      results.btwReceipt = await ctx.requestWorkspaceChange({ action: "move", dir: ${JSON.stringify(b)} });
+      results.btwReceipt = await bridge.coordinator(ctx).request({ action: "move", dir: ${JSON.stringify(b)} });
       await bridge.coordinator(ctx).applyPending();
       results.btwBusy = { state: await snapshot(), messages: structuredClone(session.agent.state.messages) };
     } finally { await fs.writeFile(${JSON.stringify(btwReleasePath)}, "released"); }
@@ -141,7 +141,7 @@ export default async function(pi) {
     results.primaryLsp = await snapshot();
     results.created = await tool("worktree_create", { branch: "integration", path: ".claude/worktree/integration" });
     results.afterCreate = await snapshot();
-    results.list = await ctx.listWorktrees();
+    results.list = await bridge.coordinator(ctx).navigation.listWorktrees();
     await fs.writeFile(${JSON.stringify(join(worktree, "fixture.go"))}, "package navigation\\n\\nvar Marker int = MissingOnlyInWorktree\\n");
     const runGit = async args => { const p = Bun.spawn(["git", ...args], { cwd: ${JSON.stringify(worktree)}, stdout: "pipe", stderr: "pipe" }); const [code, _out, err] = await Promise.all([p.exited, new Response(p.stdout).text(), new Response(p.stderr).text()]); if (code) throw new Error(err); };
     await runGit(["add", "fixture.go"]);
@@ -161,7 +161,7 @@ export default async function(pi) {
     results.worktreeRemoved = !await fs.exists(${JSON.stringify(worktree)});
     results.refused = await move(${JSON.stringify(join(root, "outside"))});
     const coordinator = bridge.coordinator(ctx);
-    await ctx.requestWorkspaceChange({ action: "move", dir: ${JSON.stringify(b)} });
+    await bridge.coordinator(ctx).request({ action: "move", dir: ${JSON.stringify(b)} });
     await coordinator.cancel("Integration cancellation before apply.");
     await session.prompt("Verify cancelled transition.");
     results.cancelled = { state: await snapshot(), messages: lastCall().messages };
@@ -304,7 +304,6 @@ sys.exit(child.returncode)
   if (result.fixtureError) {
     throw new Error(result.fixtureError);
   }
-  expect(result.api).toBe(true);
   expect(result.mode).toBe(mode);
   if (mode === "tui") {
     expect(result.ownerMatches).toBe(true);

@@ -10,7 +10,7 @@ test("re-imported extension graphs share one host and memory installation", asyn
   const script = `
 import assert from "node:assert/strict";
 import {createRuntime,findInstalledOmp} from ${JSON.stringify(source("runtime.ts"))};
-class ExtensionRunner { createContext() { return {}; } }
+class ExtensionRunner {}
 class InteractiveMode { async init() {} }
 const root=findInstalledOmp();
 const probe=createRuntime({},root);
@@ -24,11 +24,9 @@ const [hostA,hostB,memoryA,memoryB]=await Promise.all([
 assert.notEqual(hostA.installHostBridge,hostB.installHostBridge);
 const bridges=await Promise.all([hostA.installHostBridge(runtime),hostB.installHostBridge(runtime)]);
 assert.equal(bridges[0],bridges[1]);
-const createContext=ExtensionRunner.prototype.createContext;
 const ephemeral=AgentSession.prototype.runEphemeralTurn;
 const refresh=AgentSession.prototype.refreshBaseSystemPrompt;
 assert.equal(await hostA.installHostBridge(runtime),bridges[0]);
-assert.equal(ExtensionRunner.prototype.createContext,createContext);
 assert.equal(AgentSession.prototype.runEphemeralTurn,ephemeral);
 assert.equal(AgentSession.prototype.refreshBaseSystemPrompt,refresh);
 const memories=await Promise.all([memoryA.installMemoryBridge(runtime),memoryB.installMemoryBridge(runtime)]);

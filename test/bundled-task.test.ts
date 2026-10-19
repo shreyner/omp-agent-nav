@@ -136,7 +136,8 @@ export default async function(pi) {
       const running=await runTask({cwd:${JSON.stringify(b)},name:"live-B",agent:"target",task:"RUNNING_HOLD_B",solutionSpace:"mechanical"},"running B");
       {const deadline=Date.now()+10000;while(!await fs.exists(${JSON.stringify(held)})){if(Date.now()>deadline)throw new Error("Running child B did not reach provider");await Bun.sleep(5);}}
       const live=registry.get("live-B"), originalFile=live.sessionFile, originalChildId=live.session.sessionId;
-      await ctx.requestWorkspaceChange({action:"move",dir:${JSON.stringify(c)}});
+      const {installHostBridge}=await import(${JSON.stringify(relative(root, join(import.meta.dir, "..", "src", "host.ts")))});
+      await (await installHostBridge(runtime)).coordinator(ctx).request({action:"move",dir:${JSON.stringify(c)}});
       await main.prompt("MAIN_AFTER_MOVE_C");
       const afterMove={id:main.sessionId,cwd:main.sessionManager.getCwd(),bank:main.getMnemopiSessionState().config.bank,childCwd:live.session.sessionManager.getCwd(),childBank:live.session.getMnemopiSessionState().config.bank,childFile:live.sessionFile};
       await fs.writeFile(${JSON.stringify(release)},"release");

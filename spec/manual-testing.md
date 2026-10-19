@@ -75,7 +75,7 @@ Fixture `.omp/nav-manual-<runId>` останется в исходном про�
 
 | ID | Требования | Проверяемое наблюдение | Статус |
 |---|---|---|---|
-| M01 | NAV-07 | Tools/schema в обычном omp, исходный cwd | PASS 2026-10-13 (ветка fixture `master`; session ID из JSONL) |
+| M01 | NAV-07 (снято 2026-10-19) | Tools/schema в обычном omp, исходный cwd | PASS 2026-10-13 (ветка fixture `master`; session ID из JSONL) |
 | M02 | NAV-01, NAV-02, NAV-04 | Applied → relative tools A/B/A, файл только в B, сохранность baseline | PASS 2026-10-13 |
 | M03 | WT-01–WT-04 | Два точных path, HEAD/чистота, local exclude, main не переехал | PASS 2026-10-13 (`.gitignore` не изменён; `git check-ignore -v` не выполнялся, exclude подтверждён косвенно чистотой статуса) |
 | M04-single / M04-batch | TASK-01, TASK-02, NAV-03 | Реальные single/batch, cwd/branch/relative read и контекст цели | PASS 2026-10-13 |
