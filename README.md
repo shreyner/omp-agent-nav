@@ -67,6 +67,11 @@ project. In the TUI, `session_move` into a directory outside the allowed roots a
 and grants the target's primary checkout. Without an interactive UI (print mode, RPC) both that
 approval and `workspace_grant` fail closed, so allow directories up front with `--add-dir`.
 
+Grants live in the session, not in omp's `--add-dir` list, so a granted project's AGENTS.md does
+not leak into the current prompt (`--add-dir` keeps its native behaviour and does). `/nav-roots`
+lists the roots with their source; `/nav-roots revoke <dir>` revokes one (`/remove-dir` does not
+touch grants).
+
 Subagent in another project:
 
 ```json

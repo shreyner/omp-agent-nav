@@ -1,9 +1,8 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { type HostNamespace, type RuntimeModules, type SessionLike } from "./types";
+import { type HostNamespace, type RuntimeModules } from "./types";
 
 export const SUPPORTED_OMP_VERSIONS: readonly string[] = [
   "18.11.0",
@@ -110,13 +109,11 @@ export function assertInstalledOmp(packageRoot: string): string {
 const hostedModules: Record<string, () => Promise<unknown>> = {
   "registry/agent-registry.ts": () => import("@oh-my-pi/pi-coding-agent/registry/agent-registry"),
   "session/agent-session.ts": () => import("@oh-my-pi/pi-coding-agent/session/agent-session"),
-  "session/session-tools.ts": () => import("@oh-my-pi/pi-coding-agent/session/session-tools"),
   "session/artifacts.ts": () => import("@oh-my-pi/pi-coding-agent/session/artifacts"),
   "config/all-settings.ts": () => import("@oh-my-pi/pi-coding-agent/config/all-settings"),
   "config/registry.ts": () => import("@oh-my-pi/pi-coding-agent/config/registry"),
   "config/settings.ts": () => import("@oh-my-pi/pi-coding-agent/config/settings"),
   "capability/index.ts": () => import("@oh-my-pi/pi-coding-agent/capability"),
-  "capability/context-file.ts": () => import("@oh-my-pi/pi-coding-agent/capability/context-file"),
   "discovery/helpers.ts": () => import("@oh-my-pi/pi-coding-agent/discovery/helpers"),
   "extensibility/settings.ts": () => import("@oh-my-pi/pi-coding-agent/extensibility/settings"),
   "hindsight/backend.ts": () => import("@oh-my-pi/pi-coding-agent/hindsight/backend"),
@@ -223,80 +220,4 @@ export async function readSetting(
     throw new Error(`Unknown omp setting: ${id}`);
   }
   return setting.get(settings);
-}
-
-/** Additional roots grant access; their instruction files must not become the selected project's rules. */
-export async function installInstructionScope(runtime: RuntimeModules): Promise<void> {
-  const [{ contextFileCapability }, { SessionTools }, { AgentSession }] = await Promise.all([
-    runtime.importModule<{
-      contextFileCapability: { providers: Array<{ load(ctx: { cwd: string }): Promise<unknown> }> };
-    }>("capability/context-file.ts"),
-    runtime.importModule<{
-      SessionTools: {
-        prototype: {
-          runToolRegistryMutation(
-            mutation: () => Promise<unknown>,
-            signal?: AbortSignal,
-          ): Promise<unknown>;
-        };
-      };
-    }>("session/session-tools.ts"),
-    runtime.importModule<{
-      AgentSession: {
-        prototype: SessionLike & { prompt(...args: [string, unknown?]): Promise<unknown> };
-      };
-    }>("session/agent-session.ts"),
-  ]);
-  const scope = new AsyncLocalStorage<SessionLike>();
-  const owners = new WeakMap<object, SessionLike>();
-  const bound = new WeakSet<object>();
-  const wrapped = new WeakSet<object>();
-  const canonical = (directory: string) => {
-    try {
-      return realpathSync(directory);
-    } catch {
-      return directory;
-    }
-  };
-  const wrapProviders = () => {
-    for (const provider of contextFileCapability.providers) {
-      if (wrapped.has(provider)) {
-        continue;
-      }
-      wrapped.add(provider);
-      const load = provider.load;
-      provider.load = async function (ctx) {
-        const owner = scope.getStore();
-        if (owner && canonical(ctx.cwd) !== canonical(owner.sessionManager.getCwd())) {
-          return { items: [] };
-        }
-        return await load.call(this, ctx);
-      };
-    }
-  };
-  wrapProviders();
-  const tools = SessionTools.prototype;
-  const mutate = tools.runToolRegistryMutation;
-  tools.runToolRegistryMutation = async function (mutation, signal) {
-    const owner = scope.getStore() ?? owners.get(this);
-    if (owner) {
-      owners.set(this, owner);
-    }
-    wrapProviders();
-    return await mutate.call(this, () => (owner ? scope.run(owner, mutation) : mutation()), signal);
-  };
-  const sessions = AgentSession.prototype;
-  const refresh = sessions.refreshBaseSystemPrompt;
-  sessions.refreshBaseSystemPrompt = async function (commitIf) {
-    await scope.run(this, () => refresh.call(this, commitIf));
-    bound.add(this);
-  };
-  const prompt = sessions.prompt;
-  sessions.prompt = async function (...args) {
-    // Bind before native memory injection so its own rebuild retains recall and the selected scope.
-    if (!bound.has(this)) {
-      await this.refreshBaseSystemPrompt();
-    }
-    return await prompt.apply(this, args);
-  };
 }

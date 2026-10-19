@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { sep } from "node:path";
 
 import {
@@ -7,7 +7,7 @@ import {
   resolveProjectIdentity,
   WorkspaceNavigation,
 } from "../navigation";
-import { installInstructionScope, SUPPORTED_OMP_VERSIONS } from "../runtime";
+import { SUPPORTED_OMP_VERSIONS } from "../runtime";
 import {
   type ExtensionContextLike,
   type HostNamespace,
@@ -21,6 +21,12 @@ import { type RescopableSession, rescopeProjectMcp } from "./mcp";
 
 interface MemoryBridgeLike {
   ensure(session: SessionLike, sourceCwd?: string): Promise<unknown>;
+}
+
+export interface WorkspaceRoot {
+  missing: boolean;
+  root: string;
+  source: "start" | "grant" | "add-dir";
 }
 
 // omp re-imports the extension graph (`?mtime=`) for every subagent session, so module-local
@@ -41,7 +47,7 @@ export class WorkspaceBridge {
   #activeMain?: {
     sessionManager: SessionLike["sessionManager"];
     session: SessionLike;
-    grants?: WorkspaceGrantState;
+    grants: WorkspaceGrantState;
     navigation: WorkspaceNavigation;
   };
 
@@ -114,11 +120,7 @@ export class WorkspaceBridge {
   ): Promise<{ granted: string[]; skipped: string[]; roots: string[] }> {
     const session = this.currentSession(ctx);
     const navigation = this.coordinator(ctx).navigation;
-    const grants = this.#grantStates.get(session.sessionManager);
-    const manager = session.sessionManager as Partial<GrantManager>;
-    if (typeof manager.addWorkspaceDirectory !== "function") {
-      throw new Error("This omp session manager does not support adding workspace directories.");
-    }
+    const grants = this.#grants(session);
     // Resolve every directory before granting any, so one bad path grants nothing.
     const candidates: string[] = [];
     for (const [index, dir] of dirs.entries()) {
@@ -135,10 +137,7 @@ export class WorkspaceBridge {
       candidates.push(candidate);
     }
     const initial = await navigation.initialRoot();
-    const accepted = [
-      ...(initial ? [initial] : []),
-      ...(grants?.roots() ?? session.sessionManager.getAdditionalDirectories()),
-    ];
+    const accepted = [...(initial ? [initial] : []), ...grants.roots()];
     const granted: string[] = [];
     const skipped: string[] = [];
     for (const candidate of candidates) {
@@ -146,15 +145,21 @@ export class WorkspaceBridge {
         skipped.push(candidate);
         continue;
       }
-      const canonical = (await manager.addWorkspaceDirectory(candidate)) ?? candidate;
-      accepted.push(canonical);
-      granted.push(canonical);
+      grants.add(candidate);
+      accepted.push(candidate);
+      granted.push(candidate);
     }
-    return {
-      granted,
-      skipped,
-      roots: grants?.roots() ?? session.sessionManager.getAdditionalDirectories(),
-    };
+    await grants.persist();
+    return { granted, skipped, roots: grants.roots() };
+  }
+
+  #grants(session: SessionLike): WorkspaceGrantState {
+    let grants = this.#grantStates.get(session.sessionManager);
+    if (!grants) {
+      grants = new WorkspaceGrantState(session.sessionManager as GrantManager);
+      this.#grantStates.set(session.sessionManager, grants);
+    }
+    return grants;
   }
 
   /** Root a grant for `dir` would accept, as shown in approval dialogs. */
@@ -196,12 +201,8 @@ export class WorkspaceBridge {
     if (target.split(sep).includes(".git")) {
       return false;
     }
-    const granted =
-      active.grants?.roots() ?? active.session.sessionManager.getAdditionalDirectories();
-    const initial =
-      active.navigation.resolvedInitialRoot ??
-      active.grants?.initialCwd ??
-      active.session.sessionManager.getCwd();
+    const granted = active.grants.roots();
+    const initial = active.navigation.resolvedInitialRoot ?? active.grants.initialCwd;
     // A worktree of an accepted project is accepted too (validateMove authorizes its primary).
     const project = active.navigation.previewProjectRoot(target);
     return ![initial, ...granted].some(
@@ -268,6 +269,86 @@ export class WorkspaceBridge {
     return root;
   }
 
+  async listRoots(ctx: ExtensionContextLike): Promise<WorkspaceRoot[]> {
+    const navigation = this.coordinator(ctx).navigation;
+    const grants = this.#grants(this.currentSession(ctx));
+    const initial = await navigation.initialRoot();
+    const ledger = grants.ledger();
+    return [
+      { root: initial ?? grants.initialCwd, source: "start", missing: initial === undefined },
+      ...ledger.map((root) => ({ root, source: "grant" as const, missing: !existsSync(root) })),
+      ...grants
+        .native()
+        .filter(([root]) => !ledger.includes(root))
+        .map(([root]) => ({ root, source: "add-dir" as const, missing: !existsSync(root) })),
+    ];
+  }
+
+  /**
+   * Revokes the root named by `dir` (a worktree path names its primary) from the ledger and the
+   * native list. The start root is not revocable, and neither is a root the session stands in.
+   */
+  async revokeRoot(
+    ctx: ExtensionContextLike,
+    dir: string,
+  ): Promise<{ revoked: string[]; coveredBy?: string }> {
+    const session = this.currentSession(ctx);
+    const navigation = this.coordinator(ctx).navigation;
+    const grants = this.#grants(session);
+    const target = this.#namedRoot(navigation, expandPath(dir, session.sessionManager.getCwd()));
+    const ledger = grants.ledger().filter(target.matches);
+    const native = grants.native().filter(([root]) => target.matches(root));
+    const initial = await navigation.initialRoot();
+    const revoked = [...new Set([...ledger, ...native.map(([root]) => root)])];
+    const remaining = [
+      ...(initial ? [initial] : []),
+      ...grants.roots().filter((root) => !revoked.includes(root)),
+    ];
+    const coveredBy = remaining.find((root) => pathIsWithin(root, target.path));
+    if (!revoked.length) {
+      throw new Error(
+        initial !== undefined && target.matches(initial)
+          ? `${dir} is the start project; it cannot be revoked.`
+          : `${dir} is not a granted workspace root${coveredBy ? `; it is inside ${coveredBy}` : ""}.`,
+      );
+    }
+    const here = this.#namedRoot(navigation, session.sessionManager.getCwd());
+    if (!remaining.some((root) => pathIsWithin(root, here.path) || here.within(root))) {
+      throw new Error(
+        `The session is inside ${revoked.join(", ")}; move out of it before revoking it.`,
+      );
+    }
+    for (const root of ledger) {
+      grants.revoke(root);
+    }
+    await grants.persist();
+    const manager = session.sessionManager as GrantManager;
+    for (const [, stored] of native) {
+      await manager.removeWorkspaceDirectory(stored);
+    }
+    if (native.length) {
+      // Native /remove-dir does the same: the root's AGENTS leave the prompt.
+      await session.refreshBaseSystemPrompt();
+    }
+    return { revoked, coveredBy };
+  }
+
+  /** A path and its primary checkout, for matching roots that may since have vanished. */
+  #namedRoot(navigation: WorkspaceNavigation, lexical: string) {
+    let path = lexical;
+    try {
+      path = realpathSync(lexical);
+    } catch {
+      // A vanished directory still matches its ledger entry lexically.
+    }
+    const primary = navigation.previewProjectRoot(path);
+    return {
+      path,
+      matches: (root: string) => root === path || root === lexical || root === primary,
+      within: (root: string) => primary !== undefined && pathIsWithin(root, primary),
+    };
+  }
+
   coordinator(ctx: ExtensionContextLike): WorkspaceCoordinator {
     if (ctx.agent.kind !== "main") {
       throw new Error("Only the main session may navigate projects or worktrees.");
@@ -282,21 +363,13 @@ export class WorkspaceBridge {
       coordinator = undefined;
     }
     if (!coordinator) {
-      let grants = this.#grantStates.get(session.sessionManager);
-      if (
-        !grants &&
-        typeof (session.sessionManager as Partial<GrantManager>).appendCustomEntry === "function"
-      ) {
-        grants = new WorkspaceGrantState(session.sessionManager as GrantManager);
-        this.#grantStates.set(session.sessionManager, grants);
-      }
-      grants?.roots();
-      const initialCwd = grants?.initialCwd ?? session.sessionManager.getCwd();
+      const grants = this.#grants(session);
+      // roots() first re-reads the ledger if the session id changed since the state was created.
+      grants.roots();
       const navigation = new WorkspaceNavigation(this.runtime, {
-        initialCwd,
+        initialCwd: grants.initialCwd,
         getCwd: () => session.sessionManager.getCwd(),
-        getWorkspaceRoots: () =>
-          grants?.roots() ?? session.sessionManager.getAdditionalDirectories(),
+        getWorkspaceRoots: () => grants.roots(),
         getSettings: () => session.settings,
         getLiveAgentCwds: () =>
           this.runtime.host.AgentRegistry.global()
@@ -361,21 +434,32 @@ export class WorkspaceBridge {
     this.#activeMain = {
       sessionManager: session.sessionManager,
       session,
-      grants: this.#grantStates.get(session.sessionManager),
+      grants: this.#grants(session),
       navigation: coordinator.navigation,
     };
     return coordinator;
   }
 
-  async relocate(session: SessionLike, cwd: string): Promise<void> {
-    const grants = this.#grantStates.get(session.sessionManager);
-    if (grants) {
-      return await grants.withTransition(() => this.#relocate(session, cwd));
+  /**
+   * Native roots that authorize `cwd` move into the ledger before the move: native moveTo drops
+   * the new cwd from the native list and the settings watcher may drop configured roots, yet the
+   * post-move validation and later navigation must still accept them. Persisting first also
+   * records the start root before the session file moves; a rollback restores the entries.
+   */
+  async #adoptNativeRoots(session: SessionLike, cwd: string): Promise<void> {
+    const grants = this.#grants(session);
+    const primary = this.#coordinators
+      .get(session.sessionManager)
+      ?.navigation.previewProjectRoot(cwd);
+    for (const [root] of grants.native()) {
+      if (pathIsWithin(root, cwd) || (primary !== undefined && pathIsWithin(root, primary))) {
+        grants.add(root);
+      }
     }
-    return await this.#relocate(session, cwd);
+    await grants.persist();
   }
 
-  async #relocate(session: SessionLike, cwd: string): Promise<void> {
+  async relocate(session: SessionLike, cwd: string): Promise<void> {
     const previous = session.sessionManager.captureState();
     if (previous.cwd === cwd) {
       return;
@@ -383,18 +467,18 @@ export class WorkspaceBridge {
     await session.settleMemoryBackend();
     await session.sessionManager.flush();
     try {
+      await this.#adoptNativeRoots(session, cwd);
       await session.moveSession(cwd);
       await this.#rescope(session, cwd);
       await this.#coordinators.get(session.sessionManager)?.navigation.validateMove(cwd);
-      await this.#grantStates.get(session.sessionManager)?.synchronize();
       await session.refreshBaseSystemPrompt();
       await this.notifyAfterRelocation(session);
     } catch (error) {
       let warning: string | undefined;
       try {
         await session.sessionManager.rollbackMove(previous);
+        this.#grants(session).reload();
         warning = await this.#rescope(session, previous.cwd, false);
-        await this.#grantStates.get(session.sessionManager)?.synchronize();
         await session.refreshBaseSystemPrompt();
         await this.notifyAfterRelocation(session);
       } catch (restoreError) {
@@ -481,7 +565,6 @@ async function createHostBridge(runtime: RuntimeModules): Promise<WorkspaceBridg
     );
   }
   const bridge = new WorkspaceBridge(runtime);
-  await installInstructionScope(runtime);
   const sessions = await runtime.importModule<{
     AgentSession: {
       prototype: SessionLike & {

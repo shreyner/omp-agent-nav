@@ -194,10 +194,11 @@ test("an approved session_move grants the destination root, records the ledger a
     expect(receipt.details.status).toBe("queued");
     expect(receipt.details.action).toBe("move");
     expect(receipt.details.target).toBe(f.b);
-    expect(f.manager.getAdditionalDirectories()).toContain(f.b); // The execute-time grant lands while the cwd is still A.
+    // The execute-time grant lands in the ledger while the cwd is still A, never in the native list.
+    expect(f.coordinator.navigation.options.getWorkspaceRoots()).toEqual([f.b]);
+    expect(f.manager.getAdditionalDirectories()).toEqual([]);
     await f.coordinator.applyPending();
     expect(f.manager.getCwd()).toBe(f.b);
-    expect(f.manager.getAdditionalDirectories()).toEqual([]); // The native manager drops the now-current root; the permission survives in the ledger.
     expect(f.coordinator.navigation.options.getWorkspaceRoots()).toEqual([f.b]);
     const resumed = SessionManager.inMemory(f.a);
     resumed.restoreState(f.manager.captureState());

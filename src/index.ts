@@ -105,7 +105,6 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
   pi.on("session_start", async (_event, ctx) => {
     if (ctx.agent.kind === "main") {
       bridge.coordinator(ctx);
-      await bridge.currentSession(ctx).refreshBaseSystemPrompt();
       await memory.ensure(bridge.currentSession(ctx));
     } else {
       const api = pi as ExtensionApiLike & {
@@ -146,6 +145,38 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
       const coordinator = bridge.coordinator(ctx);
       await coordinator.request({ action: "move", dir: args });
       await coordinator.applyPending();
+    },
+  });
+  registerRootsCommand(pi, bridge);
+}
+
+export function registerRootsCommand(pi: ExtensionApiLike, bridge: WorkspaceBridge): void {
+  pi.registerCommand("nav-roots", {
+    description: "List workspace roots, or revoke a granted one: /nav-roots revoke <dir>.",
+    handler: async (args, ctx) => {
+      const ui = ctx.ui as { notify(message: string, type?: "info" | "warning" | "error"): void };
+      const revoke = /^revoke\s+(.+)$/.exec(args.trim());
+      if (!args.trim()) {
+        const roots = await bridge.listRoots(ctx);
+        ui.notify(
+          roots
+            .map(({ root, source, missing }) => `${source}: ${root}${missing ? " (missing)" : ""}`)
+            .join("\n"),
+          "info",
+        );
+        return;
+      }
+      if (!revoke) {
+        throw new Error("Usage: /nav-roots [revoke <dir>]");
+      }
+      if (!(ctx.isIdle as () => boolean)()) {
+        throw new Error("Wait for the current response to finish before /nav-roots revoke.");
+      }
+      const { revoked, coveredBy } = await bridge.revokeRoot(ctx, revoke[1]);
+      ui.notify(
+        `Revoked ${revoked.join(", ")}.${coveredBy ? ` ${revoke[1]} stays reachable through ${coveredBy}.` : ""}`,
+        "info",
+      );
     },
   });
 }

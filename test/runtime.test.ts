@@ -225,7 +225,9 @@ export default async function(pi) {
   expect(result.tools).toContain("task");
   expect(result.before.id).toBe(result.after.id);
   expect(JSON.stringify(result.before.prompt)).toContain("PROJECT_A_UNIQUE");
-  expect(JSON.stringify(result.before.prompt)).not.toContain("PROJECT_B_UNIQUE");
+  // --add-dir is native: its AGENTS join the prompt until a move into B adopts B into the ledger
+  // (native moveTo drops the new cwd from the list), after which A no longer shows B's AGENTS.
+  expect(JSON.stringify(result.before.prompt)).toContain("PROJECT_B_UNIQUE");
   expect(result.after.id).toBe(result.returned.id);
   expect(result.after.cwd).toBe(destination);
   expect(result.returned.cwd).toBe(cwd);

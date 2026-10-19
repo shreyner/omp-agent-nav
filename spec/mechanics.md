@@ -54,19 +54,18 @@ MCP основной сессии повторно использует тот �
 Manager отключает прежние проектные инструменты, меняет cwd, загружает MCP цели, ждёт startup и выполняет refreshMCPTools. Новый объект вместо прежнего оставил бы старые ссылки замыканий.
 LSP использует cwd цели и штатное управление ресурсами. Workspace checker и gopls проверяются раздельно в [V01](verification.md#v01).
 
-Разрешения и загрузка инструкций разделены: доступ к B не добавляет AGENTS B к prompt основной сессии A.
-Инструкции загружаются из выбранного проекта и его обычной иерархии; права, отображение additional roots и workspace tree сохраняются.
-[installInstructionScope](../src/runtime.ts) оборачивает load изменяемых context-file providers и использует per-session AsyncLocalStorage при подготовке prompt и изменении registry.
-Владелец привязывается через native SessionTools mutation и AgentSession refresh/prompt. Подавляется только загрузка чужой цели; ledger разрешений и workspace tree не меняются.
-Полный prompt не фильтруется regex, native memory recall сохраняется. Пустой результат чужого provider не кэшируется для последующего запуска сабагента B.
-Обычные bundled TUI/RPC A → B → A и print task B подтвердили отсутствие чужих AGENTS; source-test harness дополнительно проверяет ресурсы цели.
+Разрешения и загрузка инструкций разделены без перехватов: гранты живут только в ledger расширения, а штатный prompt подмешивает AGENTS и workspace tree лишь каталогов штатного списка (`--add-dir`). Поэтому грант B не добавляет AGENTS B к prompt основной сессии A.
+До 2026-10-19 гранты зеркалировались в штатный список, и `installInstructionScope` (4 патча: context-file providers, `SessionTools.runToolRegistryMutation`, `AgentSession.refreshBaseSystemPrompt`/`prompt`) глушил AGENTS всех дополнительных каталогов, включая пользовательский `--add-dir`. Перехват удалён вместе с зеркалированием.
+Обычные bundled TUI/RPC A → B → A и print task B подтверждают отсутствие AGENTS гранта; print закрепляет и штатное поведение `--add-dir` ([behavior](behavior.md#permissions)).
 
 <a id="grants"></a>
 ## Разрешения и занятость
 
-[WorkspaceGrantState](../src/host.ts) сохраняет начальный корень и явно принятые корни в session custom entry `omp-agent-nav.workspace` (NAV-06).
-Штатный move может убрать текущую B из additionalDirectories; отдельный ledger сохраняет grant B и не создаёт grant для посещённого worktree.
-Обёртки add/remove/set фиксируют явные изменения; AsyncLocalStorage transition отличает обновление представления native от пользовательского отзыва. Новая запись ledger добавляется только при изменении корней: переезд без изменений не пишет в журнал (до 2026-10-19 каждый переход добавлял одинаковую запись).
+[WorkspaceGrantState](../src/host/grants.ts) хранит начальный корень и гранты в session custom entry `omp-agent-nav.workspace` (NAV-06) и SessionManager не патчит. Принятые корни — dedupe realpath ledger и живого штатного списка; navigation, approval и `workspace_grant` читают одну функцию `roots()`.
+Перед `moveSession` [relocate](../src/host/bridge.ts) переносит в ledger штатные корни, внутри которых лежит цель или её primary, и сохраняет запись. Так корень переживает и штатный `moveTo` (он убирает новый cwd из списка), и settings watcher цели (он может убрать корни из `workspace.additionalDirectories`), а повторная проверка после переезда проходит. Запись до переезда фиксирует и начальный корень. При ошибке `rollbackMove` восстанавливает записи сессии, после чего состояние перечитывается из ledger.
+Новая запись ledger добавляется только при изменении: переезд без изменений не пишет в журнал (до 2026-10-19 каждый переход добавлял одинаковую запись).
+`/nav-roots revoke` удаляет корень из ledger и передаёт штатному `removeWorkspaceDirectory` строку в той форме, в какой она хранится в списке: штатное сравнение идёт по `path.resolve`, а не по realpath.
+До 2026-10-19 ledger засевался из штатного списка, а обёртки `addWorkspaceDirectory`/`removeWorkspaceDirectory`/`setAdditionalDirectories` и AsyncLocalStorage transition синхронизировали оба хранилища.
 Approval вычисляется синхронно, поэтому `moveNeedsGrant` и превью выдаваемого корня используют `realpathSync` и уже загруженный модуль VCS (`previewProjectRoot`: realpath, для Git-каталога — realpath primary). Путь везде раскрывается одним `expandPath`, `~` — домашний каталог и в диалоге, и в гранте.
 Решение о гранте принимается один раз — при approval. Корень, показанный в диалоге (`session_move` — в момент решения, `workspace_grant` — при отрисовке диалога), запоминается по запрошенному пути. Execute выдаёт грант только по нему: заново разрешает путь полным `resolveProjectIdentity` и отказывает, если корень изменился. Если approval решил, что грант не нужен, execute гранта не выдаёт, и validateMove отказывает с подсказкой про `workspace_grant`. Одиночный пакет не защищает от подмены: фоновая shell-задача может переставить symlink между approval и execute. До исправления 2026-10-19 execute решал заново и мог выдать грант без диалога.
 

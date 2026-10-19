@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -7,9 +6,7 @@ import { type SessionLike } from "../types";
 export type GrantManager = SessionLike["sessionManager"] & {
   getBranch(): Array<{ type: string; customType?: string; data?: unknown }>;
   appendCustomEntry(customType: string, data: unknown): unknown;
-  addWorkspaceDirectory(directory: string): Promise<string | null>;
   removeWorkspaceDirectory(directory: string): Promise<string | null>;
-  setAdditionalDirectories(directories: string[]): Promise<void>;
 };
 
 const GRANTS_ENTRY = "omp-agent-nav.workspace";
@@ -21,51 +18,22 @@ export class WorkspaceRollbackError extends Error {
   }
 }
 
-/** Native moveTo omits the current root; acceptance must survive that presentation change. */
+/**
+ * Accepted roots are the extension's own grants (a session ledger entry, per branch) plus the live
+ * native additional directories (`--add-dir`, `/add-dir`). Grants never enter the native list, so
+ * the host does not load their AGENTS into the prompt.
+ */
 export class WorkspaceGrantState {
   initialCwd: string;
   #manager: GrantManager;
   #sessionId: string;
   #grants = new Set<string>();
-  #transition = new AsyncLocalStorage<boolean>();
-  #setDirectories: GrantManager["setAdditionalDirectories"];
 
   constructor(manager: GrantManager) {
     this.#manager = manager;
     this.#sessionId = manager.getSessionId();
     this.initialCwd = manager.getCwd();
-    this.#setDirectories = manager.setAdditionalDirectories.bind(manager);
     this.#restore();
-    const add = manager.addWorkspaceDirectory.bind(manager);
-    const remove = manager.removeWorkspaceDirectory.bind(manager);
-    manager.addWorkspaceDirectory = async (directory) => {
-      this.#checkSession();
-      const added = await add(directory);
-      if (!this.#transition.getStore()) {
-        this.#grants.add(this.#canonical(added ?? directory));
-        await this.#persist();
-      }
-      return added;
-    };
-    manager.removeWorkspaceDirectory = async (directory) => {
-      this.#checkSession();
-      const canonical = this.#canonical(directory);
-      const removed = await remove(directory);
-      if (!this.#transition.getStore()) {
-        const accepted = this.#grants.delete(canonical);
-        await this.#persist();
-        return removed ?? (accepted ? canonical : null);
-      }
-      return removed;
-    };
-    manager.setAdditionalDirectories = async (directories) => {
-      this.#checkSession();
-      await this.#setDirectories(directories);
-      if (!this.#transition.getStore()) {
-        this.#grants = new Set(directories.map((directory) => this.#canonical(directory)));
-        await this.#persist();
-      }
-    };
   }
 
   #canonical(directory: string): string {
@@ -103,14 +71,19 @@ export class WorkspaceGrantState {
       this.#grants = new Set(saved.grants as string[]);
     } else {
       this.initialCwd = this.#canonical(this.#manager.getCwd());
-      this.#grants = new Set(
-        this.#manager.getAdditionalDirectories().map((directory) => this.#canonical(directory)),
-      );
+      this.#grants = new Set();
     }
   }
 
+  /** Re-reads the ledger, e.g. after a rollback restored the session entries. */
+  reload(): void {
+    this.#sessionId = this.#manager.getSessionId();
+    this.#restore();
+  }
+
   /** Appends a ledger entry only when it differs from the branch's last one. */
-  async #persist(): Promise<void> {
+  async persist(): Promise<void> {
+    this.#checkSession();
     const entry = { initialCwd: this.initialCwd, grants: [...this.#grants] };
     if (JSON.stringify(entry) === JSON.stringify(this.#saved())) {
       return;
@@ -119,18 +92,30 @@ export class WorkspaceGrantState {
     await this.#manager.flush();
   }
 
-  roots(): string[] {
+  /** The extension's own grants. */
+  ledger(): string[] {
     this.#checkSession();
     return [...this.#grants];
   }
 
-  async synchronize(): Promise<void> {
-    await this.#setDirectories([...this.#grants]);
-    await this.#persist();
+  /** Native additional directories as `[canonical, stored]`; native removal needs the stored form. */
+  native(): [string, string][] {
+    return this.#manager
+      .getAdditionalDirectories()
+      .map((directory) => [this.#canonical(directory), directory]);
   }
 
-  async withTransition<T>(operation: () => Promise<T>): Promise<T> {
+  roots(): string[] {
+    return [...new Set([...this.ledger(), ...this.native().map(([canonical]) => canonical)])];
+  }
+
+  add(root: string): void {
     this.#checkSession();
-    return await this.#transition.run(true, operation);
+    this.#grants.add(this.#canonical(root));
+  }
+
+  revoke(root: string): boolean {
+    this.#checkSession();
+    return this.#grants.delete(root);
   }
 }
