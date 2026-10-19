@@ -22,7 +22,7 @@ AGENTS другого разрешённого проекта не добавл�
 ## Результаты и ошибки
 
 Меняющие состояние инструменты сначала возвращают receipt **queued**. После пакета bridge применяет запрос до следующего обращения к модели и сохраняет итог **applied**, **failed** или **cancelled** (NAV-02).
-Итог записывается как developer-message в runtime и session JSONL; новый пользовательский ввод не требуется.
+Итог записывается как developer-message в runtime и session JSONL; новый пользовательский ввод не требуется. Каждый следующий запрос к модели, в том числе в следующих прогонах, содержит этот итог ровно один раз.
 
 `WorkspaceResult` содержит `id`, `status`, `action`; необязательные `target`, `cwd`, `error`, `result` дополняются по операции.
 Для create/remove result.path — фактический canonical путь. Create также возвращает branch, baseCommit, mainRoot и данные штатного clone backend.

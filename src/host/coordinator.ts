@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { type WorkspaceNavigation } from "../navigation";
 import {
+  type ModelCallContext,
   type SessionLike,
   type ToolCallContext,
   type WorkspaceRequest,
@@ -42,12 +43,6 @@ export class WorkspaceCoordinator {
   };
   #applying = false;
   #disposed = false;
-  #notices: Array<{
-    role: "developer";
-    content: Array<{ type: "text"; text: string }>;
-    timestamp: number;
-    attribution: "agent";
-  }> = [];
   #removers: Array<() => void> = [];
   #admittedToolCalls = new Set<string>();
 
@@ -79,20 +74,10 @@ export class WorkspaceCoordinator {
       }
     });
     this.#removers.push(
-      this.session.agent.addBeforeModelCallHook(async (signal) => {
+      this.session.agent.addBeforeModelCallHook(async (signal, context) => {
         this.#admittedToolCalls.clear();
-        await this.applyPending(signal);
+        await this.applyPending(signal, context);
         await this.#dependencies.beforeModelCall?.();
-      }),
-    );
-    this.#removers.push(
-      this.session.agent.addBeforeModelCall(async (context) => {
-        for (const notice of this.#notices) {
-          const text = notice.content[0].text;
-          if (!context.messages.some((message) => JSON.stringify(message.content).includes(text))) {
-            context.messages.push(notice);
-          }
-        }
       }),
     );
     this.session.addDisposer(() => this.dispose());
@@ -173,7 +158,8 @@ export class WorkspaceCoordinator {
     return result;
   }
 
-  async applyPending(signal?: AbortSignal): Promise<void> {
+  /** `context` is the agent loop's live context when called from the model-call hook. */
+  async applyPending(signal?: AbortSignal, context?: ModelCallContext): Promise<void> {
     const pending = this.#pending;
     if (!pending) {
       return;
@@ -184,7 +170,7 @@ export class WorkspaceCoordinator {
       this.session.sessionManager.getSessionId() !== pending.sessionId ||
       this.session.sessionManager.getCwd() !== pending.cwd
     ) {
-      await this.cancel("The session changed or the request was aborted.");
+      await this.cancel("The session changed or the request was aborted.", context);
       return;
     }
     this.#pending = undefined;
@@ -242,13 +228,13 @@ export class WorkspaceCoordinator {
     if (pending.sessionId !== this.session.sessionManager.getSessionId()) {
       return;
     }
-    await this.#notice(result);
+    await this.#notice(result, context);
     if (fatal) {
       throw fatal;
     }
   }
 
-  async cancel(reason: string): Promise<void> {
+  async cancel(reason: string, context?: ModelCallContext): Promise<void> {
     const pending = this.#pending;
     if (!pending) {
       return;
@@ -256,16 +242,23 @@ export class WorkspaceCoordinator {
     this.#pending = undefined;
     pending.detachAbort?.();
     if (this.session.sessionManager.getSessionId() === pending.sessionId) {
-      await this.#notice({
-        ...pending.result,
-        status: "cancelled",
-        error: reason,
-        cwd: this.session.sessionManager.getCwd(),
-      });
+      await this.#notice(
+        {
+          ...pending.result,
+          status: "cancelled",
+          error: reason,
+          cwd: this.session.sessionManager.getCwd(),
+        },
+        context,
+      );
     }
   }
 
-  async #notice(result: WorkspaceResult): Promise<void> {
+  /**
+   * The loop sends a copy of the agent state, so a run in progress sees the result only through
+   * its live context; state and JSONL carry it into later runs and compaction. Exactly once each.
+   */
+  async #notice(result: WorkspaceResult, context?: ModelCallContext): Promise<void> {
     const message = {
       role: "developer" as const,
       content: [
@@ -274,7 +267,7 @@ export class WorkspaceCoordinator {
       attribution: "agent" as const,
       timestamp: Date.now(),
     };
-    this.#notices.push(message);
+    context?.messages.push(message);
     this.session.agent.appendMessage(message);
     this.session.sessionManager.appendMessage(message);
     await this.session.sessionManager.flush();

@@ -181,6 +181,18 @@ describe("real omp agent loop with fake provider", () => {
     expect(f.priorGateCalls()).toBe(1);
   });
 
+  test("each model call carries the operation result exactly once, also in a later run (CR-1)", async () => {
+    const f = await fixture();
+    await f.agent.prompt("move");
+    await f.agent.prompt("after");
+    const notices = (call: { context: MockContext }) =>
+      JSON.stringify(call.context.messages).split("Workspace operation result").length - 1;
+    expect(f.mock.calls.map(notices)).toEqual([0, 1, 1]);
+    expect(
+      JSON.stringify(f.agent.state.messages).split("Workspace operation result").length - 1,
+    ).toBe(1);
+  });
+
   test("rejects the entire move + write batch before either tool has effects", async () => {
     const f = await fixture({ mixed: true });
     await f.agent.prompt("mixed");

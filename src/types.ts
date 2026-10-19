@@ -46,16 +46,17 @@ export type ToolCallGate = (
   | { block?: boolean; reason?: string }
   | undefined;
 
+/** The agent loop's live context; pushing to `messages` reaches this and later model calls. */
+export interface ModelCallContext {
+  messages: unknown[];
+}
+
 export interface SessionLike {
   addDisposer(dispose: () => void): void;
   agent: {
     beforeToolCall?: ToolCallGate;
-    addBeforeModelCallHook(hook: (signal?: AbortSignal) => Promise<void>): () => void;
-    addBeforeModelCall(
-      hook: (
-        context: { messages: Array<{ role: string; content: unknown }> },
-        signal?: AbortSignal,
-      ) => Promise<void>,
+    addBeforeModelCallHook(
+      hook: (signal: AbortSignal | undefined, context: ModelCallContext) => Promise<void>,
     ): () => void;
     appendMessage(message: unknown): void;
     setSystemPrompt(prompt: string[]): void;
