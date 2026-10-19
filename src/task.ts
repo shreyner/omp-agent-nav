@@ -196,7 +196,16 @@ interface TaskToolFactory {
 }
 /** Shared budget for target-MCP startup readiness; mutable for tests. */
 export const mcpStartupWait = { ms: 30_000 };
+/** Managers created by the current call; preparation failures close only these. */
 const ownedMcpManagers = new WeakMap<NativeTaskSession, ScopedMcpManager>();
+/**
+ * One destination manager per (main session, target), reused by later calls and closed when the
+ * main session is disposed. Children never own their manager: park/revive and grandchildren
+ * reuse it, so it cannot close when a child finishes. Sharing the main session's own manager is
+ * not an option either: a main move rescopes it in place under a running child.
+ * The pool does not re-read the target's .mcp.json between calls (main needs /mcp reload too).
+ */
+const pooledMcpManagers = new WeakMap<SessionLike, Map<string, ScopedMcpManager>>();
 
 export function findNativeToolSession(session: SessionLike): NativeTaskSession {
   const getTool = (session as SessionLike & { getToolByName(name: string): unknown }).getToolByName;
@@ -282,6 +291,24 @@ export async function createScopedMcpManager(
   }
 }
 
+/** After preflight a child may hold the manager, so later failures must not close it. */
+function poolScopedMcp(parent: SessionLike, target: string, scoped: NativeTaskSession): void {
+  const manager = ownedMcpManagers.get(scoped);
+  if (!manager) {
+    return;
+  }
+  ownedMcpManagers.delete(scoped);
+  let pool = pooledMcpManagers.get(parent);
+  if (!pool) {
+    pool = new Map();
+    pooledMcpManagers.set(parent, pool);
+  }
+  // Two concurrent first calls may both create one; the loser stays alive for its children.
+  if (!pool.has(target)) {
+    pool.set(target, manager);
+  }
+}
+
 export async function prepareTaskScope(
   runtime: RuntimeModules,
   parent: SessionLike,
@@ -351,13 +378,18 @@ export async function prepareTaskScope(
     })
   ).skills;
   if (native.enableMCP !== false) {
-    const manager = await createScopedMcpManager(runtime, target, settings, native.authStorage);
-    scoped.mcpManager = manager;
-    ownedMcpManagers.set(scoped, manager);
-    // Kept-alive native children retain this manager across park/revive and parent cwd changes.
-    parent.addDisposer(() => {
-      void manager.disconnectAll().catch(() => {});
-    });
+    const pooled = pooledMcpManagers.get(parent)?.get(target);
+    if (pooled) {
+      scoped.mcpManager = pooled;
+    } else {
+      const manager = await createScopedMcpManager(runtime, target, settings, native.authStorage);
+      scoped.mcpManager = manager;
+      ownedMcpManagers.set(scoped, manager);
+      // Kept-alive native children retain this manager across park/revive and parent cwd changes.
+      parent.addDisposer(() => {
+        void manager.disconnectAll().catch(() => {});
+      });
+    }
   } else {
     scoped.mcpManager = undefined;
     scoped.enableMCP = false;
@@ -420,7 +452,8 @@ export async function installTaskTool(
     approval: "exec",
     get description() {
       if (advertisedKind === "sub") {
-        return advertisedTask!.description;
+        // session_start may have failed or timed out before the native tool was created.
+        return advertisedTask?.description ?? "Delegate to native omp agents.";
       }
       return `${advertisedTask?.description ?? "Delegate to native omp agents."}\nOptional cwd selects the project before agent discovery and launch. Each tasks[] item may set its own cwd; omitted cwd snapshots the parent's directory. Child instructions, tools, MCP, and memory come from the destination.`;
     },
@@ -513,6 +546,9 @@ export async function installTaskTool(
       } catch (error) {
         await cleanupPrepared();
         throw error;
+      }
+      for (const [target, scope] of scopes) {
+        poolScopedMcp(parent, target, (await scope).session);
       }
       const started = Date.now();
       const snapshots: TaskResult[] = new Array(items.length);
@@ -818,6 +854,10 @@ function taskPreflightOptions(
     assignment: item.task,
     context: batch ? raw.context : undefined,
     agent: item.agent,
+    // Seance (omp >= 18.11.3) resolves its source in preflight, like native #resolveSpawnPreflight.
+    // A whitelist, not `...item`: request-only fields (session, blockedAgent, structured) stay ours.
+    sourceSession: item.sourceSession,
+    model: item.model,
     structured,
     ...(structured && Object.hasOwn(item, "outputSchema")
       ? { outputSchema: item.outputSchema }

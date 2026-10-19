@@ -80,6 +80,8 @@ const dirs = await runtime.importModule<{
   setAgentDir(dir: string): void;
   setProjectDir(dir: string): void;
 }>("@oh-my-pi/pi-utils");
+// The seance agent exists since omp 18.11.3; older matrix hosts skip its test.
+const hasSeance = await Bun.file(join(runtime.packageRoot, "src", "task", "seance.ts")).exists();
 const originalAgentDir = dirs.getAgentDir();
 const originalCwd = process.cwd();
 registerMockApi();
@@ -111,7 +113,12 @@ afterEach(async () => {
   }
 });
 
-async function fixture(persist = false, batch: boolean | null = true, defaultMemoryPath = false) {
+async function fixture(
+  persist = false,
+  batch: boolean | null = true,
+  defaultMemoryPath = false,
+  start = true,
+) {
   const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), "omp-nav-task-")));
   temporary.push(root);
   const a = join(root, "A");
@@ -266,7 +273,7 @@ async function fixture(persist = false, batch: boolean | null = true, defaultMem
   } as ExtensionApiLike;
   await installTaskTool(pi, runtime, bridge, memory);
   const ctx = { agent: { id: "Main", kind: "main" } } as ExtensionContextLike;
-  for (const handler of startHandlers) {
+  for (const handler of start ? startHandlers : []) {
     await handler({ type: "session_start" }, ctx);
   }
   return { root, a, b, c, session, tool, mock, ctx, hooks };
@@ -525,6 +532,48 @@ describe("native task destination scope", () => {
     await syncTaskAnchor(runtime, f.session);
     expect(await fs.realpath(anchor)).toBe(await fs.realpath(actual));
     await fs.appendFile(anchor, "");
+  }, 30000);
+
+  test.skipIf(!hasSeance)(
+    "seance source fields reach the destination preflight (EXT-02)",
+    async () => {
+      const f = await fixture();
+      const before = f.mock.calls.length;
+      const missing = join(f.root, "missing.jsonl");
+      const run = (id: string, params: Record<string, unknown>) =>
+        f.tool.execute(id, params, undefined, undefined, f.ctx);
+      // Without the field the wrapper failed first with "requires a source session".
+      await expect(
+        run("seance-missing", { cwd: f.b, agent: "seance", task: "Q", sourceSession: missing }),
+      ).rejects.toThrow("was not found");
+      const source = join(f.root, "source.jsonl");
+      await fs.writeFile(source, `${JSON.stringify({ type: "session", id: "src-1" })}\n`);
+      await expect(
+        run("seance-model", { cwd: f.b, agent: "seance", task: "Q", sourceSession: source }),
+      ).rejects.toThrow("no saved model");
+      await expect(
+        run("seance-batch", {
+          context: "C",
+          tasks: [{ cwd: f.b, name: "s1", agent: "seance", task: "Q", sourceSession: missing }],
+        }),
+      ).rejects.toThrow("was not found");
+      expect(f.mock.calls.length).toBe(before);
+    },
+    30000,
+  );
+
+  test("a subagent without its session_start still runs ordinary native task (EXT-03)", async () => {
+    const f = await fixture(false, true, false, false);
+    expect(typeof f.tool.description).toBe("string");
+    const result = (await f.tool.execute(
+      "sub-cold",
+      { agent: "missing-agent", task: "x", solutionSpace: "mechanical" },
+      undefined,
+      undefined,
+      { agent: { id: "Sub", kind: "sub" } } as ExtensionContextLike,
+    )) as { content: Array<{ text?: string }> };
+    expect(JSON.stringify(result.content)).toContain("Unknown agent");
+    expect(f.mock.calls.length).toBe(0);
   }, 30000);
 
   test("native isolation starts from target B and keeps B's bank", async () => {
@@ -1120,6 +1169,33 @@ describe("native task destination scope", () => {
         solutionSpace: "mechanical",
       }),
     ).rejects.toThrow("Only the main session");
+  }, 30000);
+
+  test("repeated tasks reuse one destination MCP process; a later failed preflight keeps it (CR-4)", async () => {
+    const f = await fixture();
+    const pidFile = await localMcp(f.root, f.b, "pooledB");
+    findNativeToolSession(f.session).enableMCP = true;
+    const run = (name: string, agent = "target") =>
+      f.tool.execute(
+        `pool-${name}`,
+        { cwd: f.b, name, agent, task: "B", solutionSpace: "mechanical" },
+        undefined,
+        undefined,
+        f.ctx,
+      ) as Promise<{ details: { results: Array<{ id: string; exitCode: number }> } }>;
+    const first = (await run("first")).details.results[0];
+    expect(first.exitCode).toBe(0);
+    const pid = Number(await fs.readFile(pidFile, "utf8"));
+    expect((await run("second")).details.results[0].exitCode).toBe(0);
+    // The fixture server rewrites its pid file on every start: one start means one process.
+    expect(Number(await fs.readFile(pidFile, "utf8"))).toBe(pid);
+    await expect(run("broken", "missing-agent")).rejects.toThrow("Unknown agent");
+    expect(() => process.kill(pid, 0)).not.toThrow();
+    const child = runtime.host.AgentRegistry.global().get(first.id)!.session! as NativeSession;
+    const manager = findNativeToolSession(child).mcpManager as {
+      getTools(): Array<{ name: string; mcpToolName?: string }>;
+    };
+    expect(manager.getTools().some((tool) => tool.mcpToolName === "marker_B")).toBe(true);
   }, 30000);
 
   test("failed batch preflight closes all prepared sibling MCP processes", async () => {
