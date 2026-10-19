@@ -1,5 +1,5 @@
-import { existsSync, realpathSync } from "node:fs";
-import { sep } from "node:path";
+import { existsSync, realpathSync, statSync } from "node:fs";
+import { resolve, sep } from "node:path";
 
 import {
   expandPath,
@@ -16,16 +16,18 @@ import {
   type SessionLike,
 } from "../types";
 import { WorkspaceCoordinator } from "./coordinator";
-import {
-  canonicalDirectory,
-  type GrantManager,
-  WorkspaceGrantState,
-  WorkspaceRollbackError,
-} from "./grants";
+import { type GrantManager, WorkspaceGrantState, WorkspaceRollbackError } from "./grants";
 import { type RescopableSession, rescopeProjectMcp } from "./mcp";
 
 interface MemoryBridgeLike {
   ensure(session: SessionLike, sourceCwd?: string): Promise<unknown>;
+}
+
+interface HostSlashParser {
+  parseSlashCommand(text: string): { name: string; args: string } | null;
+}
+interface HostPathResolver {
+  resolveToCwd(filePath: string, cwd: string): string;
 }
 
 export interface WorkspaceRoot {
@@ -52,6 +54,8 @@ export class WorkspaceBridge {
   #workspaceApplying = new WeakSet<object>();
   #settingRegistry?: { lookup(id: string): { get(settings: unknown): unknown } | undefined };
   #launchAdded: string[] = [];
+  #slash?: HostSlashParser;
+  #paths?: HostPathResolver;
   #activeMain?: {
     sessionManager: SessionLike["sessionManager"];
     session: SessionLike;
@@ -70,10 +74,16 @@ export class WorkspaceBridge {
   async loadLaunchRoots(argv = process.argv.slice(2)): Promise<void> {
     await this.runtime.importModule("config/all-settings.ts");
     this.#settingRegistry = await this.runtime.importModule("config/registry.ts");
-    const cli = await this.runtime.importModule<{
-      parseArgs(args: string[]): { addDir?: string[] };
-    }>("cli/args.ts");
+    const [cli, slash, paths] = await Promise.all([
+      this.runtime.importModule<{ parseArgs(args: string[]): { addDir?: string[] } }>(
+        "cli/args.ts",
+      ),
+      this.runtime.importModule<HostSlashParser>("slash-commands/helpers/parse.ts"),
+      this.runtime.importModule<HostPathResolver>("tools/path-utils.ts"),
+    ]);
     this.#launchAdded = cli.parseArgs(argv).addDir ?? [];
+    this.#slash = slash;
+    this.#paths = paths;
   }
 
   /** `workspace.additionalDirectories` of the current settings, as configured. */
@@ -369,29 +379,83 @@ export class WorkspaceBridge {
   }
 
   /**
-   * The user typed `/add-dir` or `/remove-dir`; the input hook sees it before the host runs the
-   * command. The directory becomes or stops being a navigation root, mirroring the host's own
-   * checks (idle, existing directory, not the cwd). Nothing else that writes the native list —
-   * the settings watcher above all — grants a root.
+   * The user typed `/add-dir` or `/remove-dir` in the TUI; the input event arrives before the host
+   * runs the command. Only what the host itself will do counts: the same parser and path
+   * resolution, a directory that is not the cwd for `/add-dir`, a directory in the native list
+   * for `/remove-dir`. RPC is left out: its steer/follow-up inputs never run the host command.
+   * Nothing else that writes the native list — the settings watcher above all — grants a root.
    */
-  async onUserDirCommand(
-    ctx: ExtensionContextLike,
-    command: "add-dir" | "remove-dir",
-    dir: string,
-  ): Promise<void> {
-    const session = this.currentSession(ctx);
-    const grants = this.#grants(session);
-    const cwd = canonicalDirectory(session.sessionManager.getCwd(), "/");
-    const root = canonicalDirectory(dir, cwd);
-    if (command === "add-dir") {
-      if (root === cwd || root.split(sep).includes(".git") || !existsSync(root)) {
-        return;
-      }
-      grants.add(root);
-    } else if (pathIsWithin(root, cwd) || !grants.revoke(root)) {
+  async onUserInput(ctx: ExtensionContextLike, event: Record<string, unknown>): Promise<void> {
+    const parsed =
+      typeof event.text === "string" ? this.#slash?.parseSlashCommand(event.text) : null;
+    if (
+      (parsed?.name !== "add-dir" && parsed?.name !== "remove-dir") ||
+      !parsed.args ||
+      event.source !== "interactive" ||
+      ctx.agent.kind !== "main" ||
+      !(ctx.isIdle as () => boolean)()
+    ) {
       return;
     }
-    await grants.persist();
+    const session = this.currentSession(ctx);
+    const cwd = session.sessionManager.getCwd();
+    let resolved: string;
+    try {
+      resolved = resolve(this.#paths!.resolveToCwd(parsed.args, cwd));
+    } catch {
+      return;
+    }
+    const changed =
+      parsed.name === "add-dir"
+        ? this.#userAddDir(ctx, session, resolved)
+        : this.#userRemoveDir(session, resolved);
+    if (changed) {
+      await this.#grants(session).persist();
+    }
+  }
+
+  #userAddDir(ctx: ExtensionContextLike, session: SessionLike, resolved: string): boolean {
+    if (
+      resolved === resolve(session.sessionManager.getCwd()) ||
+      resolved.split(sep).includes(".git")
+    ) {
+      return false;
+    }
+    try {
+      if (!statSync(resolved).isDirectory()) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
+    const root = this.#grants(session).add(resolved);
+    if (root !== resolved) {
+      // A symlink or alias: say which directory navigation will accept.
+      (ctx.ui as { notify?(message: string, type?: string): void } | undefined)?.notify?.(
+        `omp-agent-nav: /add-dir ${resolved} accepts navigation into ${root}.`,
+        "info",
+      );
+    }
+    return true;
+  }
+
+  #userRemoveDir(session: SessionLike, resolved: string): boolean {
+    const grants = this.#grants(session);
+    const listed = grants.native().find(([, stored]) => resolve(stored) === resolved);
+    return (
+      listed !== undefined &&
+      resolved !== resolve(session.sessionManager.getCwd()) &&
+      grants.revoke(listed[0])
+    );
+  }
+
+  /** Writes roots a session change carried over; `reason` comes from the host's event. */
+  async settleGrants(ctx: ExtensionContextLike, reason?: "new" | "resume" | "fork"): Promise<void> {
+    const grants = this.#grants(this.currentSession(ctx));
+    if (reason) {
+      grants.switched(reason);
+    }
+    await grants.settle();
   }
 
   /**

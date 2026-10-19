@@ -105,6 +105,7 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
   pi.on("session_start", async (_event, ctx) => {
     if (ctx.agent.kind === "main") {
       bridge.coordinator(ctx);
+      await bridge.settleGrants(ctx);
       await memory.ensure(bridge.currentSession(ctx));
     } else {
       const api = pi as ExtensionApiLike & {
@@ -123,25 +124,21 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
       await bridge.coordinator(ctx).cancel("The session is switching.");
     }
   });
-  pi.on("session_switch", async (_event, ctx) => {
+  pi.on("session_switch", async (event, ctx) => {
     if (ctx.agent.kind === "main") {
       bridge.coordinator(ctx);
+      await bridge.settleGrants(ctx, event.reason as "new" | "resume" | "fork");
       await memory.ensure(bridge.currentSession(ctx));
       await bridge.notifyAfterRelocation(bridge.currentSession(ctx));
     }
   });
-  // The user's own /add-dir and /remove-dir decide navigation roots; the host runs them right after.
-  pi.on("input", async (event, ctx) => {
-    const command = /^\/(add-dir|remove-dir)\s+(.+)$/.exec(String(event.text ?? "").trim());
-    if (
-      command &&
-      ctx.agent.kind === "main" &&
-      (event.source === "interactive" || event.source === "rpc") &&
-      (ctx.isIdle as () => boolean)()
-    ) {
-      await bridge.onUserDirCommand(ctx, command[1] as "add-dir" | "remove-dir", command[2]);
+  pi.on("session_branch", async (event, ctx) => {
+    if (ctx.agent.kind === "main" && (event.reason === "fork" || event.reason === "branch")) {
+      await bridge.settleGrants(ctx, "fork");
     }
   });
+  // The user's own /add-dir and /remove-dir decide navigation roots; the host runs them right after.
+  pi.on("input", async (event, ctx) => await bridge.onUserInput(ctx, event));
   pi.on("session_shutdown", (_event, ctx) => {
     if (ctx.agent.kind === "main") {
       bridge.coordinator(ctx).dispose();

@@ -92,7 +92,7 @@ memory backend.
 - Directories that `workspace.additionalDirectories` settings add during a session are not
   navigation roots (a move target's project config could otherwise grant itself anything); the
   start project's and global settings count for a new session. `/add-dir` and `/remove-dir` count
-  only when typed in the TUI or RPC.
+  only when typed in the TUI; in RPC and print mode use `--add-dir`.
 - After a move, the main session keeps the JS/TS extensions and custom tools it loaded at startup;
   extensions of the target project are not loaded. New subagents load the target's extensions.
 - `SYSTEM.md` / `SYSTEM_TEMPLATE.md` overrides are resolved once when omp starts; after a move the

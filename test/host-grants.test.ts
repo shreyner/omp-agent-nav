@@ -23,6 +23,8 @@ const { SessionManager } = await runtime.importModule<{
       addWorkspaceDirectory(directory: string): Promise<string | null>;
       moveTo(cwd: string): Promise<void>;
       newSession(options?: { additionalDirectories?: string[] }): Promise<unknown>;
+      createBranchedSession(leafId: string): unknown;
+      getLeafId(): string | null;
       resetLeaf(): void;
       restoreState(state: unknown): void;
     };
@@ -135,12 +137,26 @@ async function relocating(
       .getEntries()
       .filter((entry) => entry.type === "custom" && entry.customType === "omp-agent-nav.workspace");
   /** The user typed `/<command> <dir>`; the input hook runs before the host's own command. */
+  const notices: string[] = [];
+  const input = async (
+    text: string,
+    options: { source?: string; idle?: boolean; kind?: "main" | "sub" } = {},
+  ) =>
+    await bridge.onUserInput(
+      {
+        ...ctx,
+        agent: { id: "main", kind: options.kind ?? "main" },
+        isIdle: () => options.idle ?? true,
+        ui: { notify: (message: string) => notices.push(message) },
+      } as unknown as ExtensionContextLike,
+      { type: "input", text, source: options.source ?? "interactive" },
+    );
   const typed = async (command: "add-dir" | "remove-dir", dir: string) => {
-    await bridge.onUserDirCommand(ctx, command, dir);
+    await input(`/${command} ${dir}`);
     if (command === "add-dir") {
       await manager.addWorkspaceDirectory(dir).catch(() => null);
     } else {
-      await manager.removeWorkspaceDirectory(dir);
+      await manager.removeWorkspaceDirectory(dir).catch(() => null);
     }
   };
   const roots = () => coordinator.navigation.options.getWorkspaceRoots();
@@ -178,6 +194,8 @@ async function relocating(
     prompts,
     ledgerEntries,
     typed,
+    input,
+    notices,
     roots,
     watch,
   };
@@ -327,6 +345,86 @@ test("only the user's typed /add-dir and /remove-dir change roots, not other nat
     await f.typed("remove-dir", f.b);
     expect(f.roots()).toEqual([]);
     expect(f.bridge.moveNeedsGrant(f.b)).toBe(true);
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
+test("the input hook counts only what the host itself runs as /add-dir or /remove-dir", async () => {
+  const f = await relocating("input-filter");
+  try {
+    const note = join(f.root, "note.txt");
+    await fs.writeFile(note, "");
+    // Not a host command: RPC steer/follow-up, other extensions, busy, subagents, a leading space.
+    await f.input(`/add-dir ${f.b}`, { source: "rpc" });
+    await f.input(`/add-dir ${f.b}`, { source: "extension" });
+    await f.input(`/add-dir ${f.b}`, { idle: false });
+    await f.input(`/add-dir ${f.b}`, { kind: "sub" });
+    await f.input(` /add-dir ${f.b}`);
+    // The host resolves "/" to the cwd and refuses it, and refuses files.
+    await f.input("/add-dir /");
+    await f.input(`/add-dir ${note}`);
+    expect(f.roots()).toEqual([]);
+    // The host's own parser: ":" separates the argument too.
+    await f.input(`/add-dir:${f.b}`);
+    expect(f.roots()).toEqual([f.b]);
+    // /remove-dir only revokes what the host removes: a directory in its native list.
+    await f.input(`/remove-dir ${f.b}`);
+    expect(f.roots()).toEqual([f.b]);
+    await f.manager.addWorkspaceDirectory(f.b);
+    await f.input(`/remove-dir ${f.b}`);
+    expect(f.roots()).toEqual([]);
+    // An alias grants its real directory, and the user is told so.
+    const alias = join(f.root, "B-alias");
+    await fs.symlink(f.b, alias);
+    await f.input(`/add-dir ${alias}`);
+    expect(f.roots()).toEqual([f.b]);
+    expect(f.notices.pop()).toContain(`accepts navigation into ${f.b}`);
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
+test("/new and fork inherit the current roots and record them; a fork cannot bring back a revoke", async () => {
+  const f = await relocating("switch");
+  try {
+    const secret = join(f.root, "secret");
+    await fs.mkdir(secret);
+    await f.bridge.grantWorkspaceDirs(f.ctx, [f.b]);
+    const beforeRevoke = f.manager.getLeafId();
+    await f.bridge.revokeRoot(f.ctx, f.b);
+    // Fork from a point whose copied ledger entry still grants B.
+    f.manager.createBranchedSession(beforeRevoke!);
+    await f.bridge.settleGrants(f.ctx, "fork");
+    expect(f.roots()).toEqual([]);
+    // /new: the old start becomes a grant and is written, so a resume elsewhere keeps it and does
+    // not seed the project's settings instead.
+    await f.bridge.grantWorkspaceDirs(f.ctx, [f.b]);
+    // The fork changed the session id: the bridge hands out a fresh coordinator.
+    const forked = f.bridge.coordinator(f.ctx);
+    await forked.request({ action: "move", dir: f.b });
+    await forked.applyPending();
+    await f.manager.newSession({ additionalDirectories: [secret] });
+    await f.bridge.settleGrants(f.ctx, "new");
+    expect(f.roots()).toEqual([f.a]);
+    const resumed = new WorkspaceGrantState(f.manager, { added: [], configured: [secret] });
+    expect(resumed.initialCwd).toBe(f.b);
+    expect(resumed.roots()).toEqual([f.a]);
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
+test("--add-dir on resuming a session with a ledger is recorded, so switching back keeps it", async () => {
+  const f = await relocating("resume-add-dir");
+  try {
+    const c = join(f.root, "C");
+    await fs.mkdir(c);
+    await f.bridge.grantWorkspaceDirs(f.ctx, [f.b]);
+    const restarted = new WorkspaceGrantState(f.manager, { added: [c], configured: [] });
+    expect(restarted.roots()).toEqual([f.b, c]);
+    await restarted.settle();
+    expect(new WorkspaceGrantState(f.manager).roots()).toEqual([f.b, c]);
   } finally {
     f.coordinator.dispose();
   }

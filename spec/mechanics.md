@@ -65,12 +65,12 @@ Bundled print закрепляет штатное поведение `--add-dir`
 [WorkspaceGrantState](../src/host/grants.ts) хранит начальный корень и гранты в session custom entry `omp-agent-nav.workspace` (NAV-06) и SessionManager не патчит. Принятые корни — только ledger: `roots()` читают navigation, approval и `workspace_grant`. Действует последняя запись сессии по `getEntries()`, а не по ветке. Пути раскрываются как в хосте (`normalizeWorkspaceDirectory`: `~` — домашний каталог, относительный путь — от cwd), затем realpath (`canonicalDirectory`).
 Источники грантов:
 - диалоги;
-- `--add-dir`: bridge при установке берёт его из `parseArgs` командной строки (`loadLaunchRoots`) и добавляет к ledger при создании состояния; относительный путь — от `process.cwd()`;
+- `--add-dir`: bridge при установке берёт его из `parseArgs` командной строки (`loadLaunchRoots`) и добавляет к ledger при создании состояния; относительный путь — от `process.cwd()`. У возобновлённой сессии с записью новое значение записывается на `session_start` (`settleGrants`);
 - `workspace.additionalDirectories` стартовых настроек: засевает состояние без записи ledger, значение читается синхронно через реестр настроек;
-- событие `input`, где пользователь ввёл `/add-dir`/`/remove-dir` в TUI или RPC ([index.ts](../src/index.ts), `onUserDirCommand`).
+- событие `input` с `source: "interactive"` ([index.ts](../src/index.ts) → `bridge.onUserInput`). Разбор и путь берутся у хоста (`slash-commands/helpers/parse`, `tools/path-utils` → `resolveToCwd`), проверки повторяют builtin `/add-dir`/`/remove-dir`.
 
 Штатный список дополнительных каталогов как источник корней не читается. Его пишут и settings watcher (async-обработчики, `#fireChangesSince` их не ждёт), и относительные значения от меняющегося cwd. Три раунда ревью 2026-10-19 показали, что вычитание «недоверенных» из этого списка обходится через относительные пути, symlink, `/new`, откат и `/tree`.
-При смене session id без записи (`/new`, `/resume`, fork) прежние корни переносятся: прежний старт становится грантом, новый старт — текущий cwd.
+При смене session id состояние перечитывается лениво: запись новой сессии, а без неё перенос прежних корней (прежний старт становится грантом, новый старт — текущий cwd). Причину смены сообщают события `session_switch` (`new`/`resume`/`fork`) и `session_branch` (`fork`/`branch`). По ним `settleGrants` при `/new` и fork переносит прежнее состояние поверх скопированной записи и сразу записывает его в ledger.
 Перед `moveSession` [relocate](../src/host/bridge.ts) сохраняет запись ledger: так фиксируется начальный корень до того, как файл сессии переедет. При ошибке `rollbackMove` восстанавливает записи сессии; гранты в памяти переезд не меняет.
 Новая запись ledger добавляется только при изменении: переезд без изменений не пишет в журнал (до 2026-10-19 каждый переход добавлял одинаковую запись).
 `/nav-roots revoke` удаляет корень из ledger и передаёт штатному `removeWorkspaceDirectory` строку в той форме, в какой она хранится в списке: штатное сравнение идёт по `path.resolve`, а не по realpath.

@@ -113,6 +113,9 @@ export const hostedModules: Readonly<Record<string, () => Promise<unknown>>> = {
   "config/all-settings.ts": () => import("@oh-my-pi/pi-coding-agent/config/all-settings"),
   "config/registry.ts": () => import("@oh-my-pi/pi-coding-agent/config/registry"),
   "cli/args.ts": () => import("@oh-my-pi/pi-coding-agent/cli/args"),
+  "slash-commands/helpers/parse.ts": () =>
+    import("@oh-my-pi/pi-coding-agent/slash-commands/helpers/parse"),
+  "tools/path-utils.ts": () => import("@oh-my-pi/pi-coding-agent/tools/path-utils"),
   "config/settings.ts": () => import("@oh-my-pi/pi-coding-agent/config/settings"),
   "capability/index.ts": () => import("@oh-my-pi/pi-coding-agent/capability"),
   "discovery/helpers.ts": () => import("@oh-my-pi/pi-coding-agent/discovery/helpers"),

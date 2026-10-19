@@ -51,6 +51,10 @@ export class WorkspaceGrantState {
   #manager: GrantManager;
   #sessionId: string;
   #grants = new Set<string>();
+  /** State the session just left, for a /new or fork that must inherit it (see `switched`). */
+  #left?: { sessionId: string; initialCwd: string; grants: Set<string> };
+  /** In-memory roots the ledger does not hold yet; `settle` writes them. */
+  #dirty = false;
 
   constructor(manager: GrantManager, launch: LaunchRoots = { added: [], configured: [] }) {
     this.#manager = manager;
@@ -63,7 +67,9 @@ export class WorkspaceGrantState {
       saved?.grants ?? launch.configured.map((directory) => this.#canonical(directory)),
     );
     for (const directory of launch.added) {
-      this.#grants.add(canonicalDirectory(directory, process.cwd()));
+      const root = canonicalDirectory(directory, process.cwd());
+      this.#dirty ||= saved !== undefined && !this.#grants.has(root);
+      this.#grants.add(root);
     }
   }
 
@@ -88,26 +94,61 @@ export class WorkspaceGrantState {
     return { initialCwd: data.initialCwd, grants: data.grants };
   }
 
-  /** On /new, /resume or a fork without a ledger entry the user's roots carry over. */
+  /** A switched session uses its own ledger; without one the user's roots carry over. */
   #checkSession(): void {
     if (this.#sessionId === this.#manager.getSessionId()) {
       return;
     }
     this.#sessionId = this.#manager.getSessionId();
+    this.#left = {
+      sessionId: this.#sessionId,
+      initialCwd: this.initialCwd,
+      grants: new Set(this.#grants),
+    };
     const saved = this.#saved();
     if (saved) {
       this.initialCwd = saved.initialCwd;
       this.#grants = new Set(saved.grants);
-      return;
+    } else {
+      this.#carry(this.#left);
     }
-    this.#grants.add(this.initialCwd);
+  }
+
+  /** The previous start root becomes a grant; the current cwd is the new start. */
+  #carry(left: { initialCwd: string; grants: Set<string> }): void {
+    this.#grants = new Set([...left.grants, left.initialCwd]);
     this.initialCwd = this.#canonical(this.#manager.getCwd());
     this.#grants.delete(this.initialCwd);
+    this.#dirty = true;
+  }
+
+  /**
+   * The host told why the session changed. A /new or fork inherits the state it came from even
+   * when the fork copied an older ledger entry: a revoke must not come back through a fork.
+   */
+  switched(reason: "new" | "resume" | "fork"): void {
+    this.#checkSession();
+    if (reason !== "resume" && this.#left?.sessionId === this.#sessionId) {
+      this.#carry(this.#left);
+    }
+    this.#left = undefined;
+  }
+
+  /**
+   * Writes roots the ledger does not hold yet — carried over by a session change or added by
+   * `--add-dir` to a resumed session — so a later resume in another process sees them too.
+   */
+  async settle(): Promise<void> {
+    this.#checkSession();
+    if (this.#dirty) {
+      await this.persist();
+    }
   }
 
   /** Appends a ledger entry only when it differs from the session's latest one. */
   async persist(): Promise<void> {
     this.#checkSession();
+    this.#dirty = false;
     const entry = { initialCwd: this.initialCwd, grants: [...this.#grants] };
     if (JSON.stringify(entry) === JSON.stringify(this.#saved() ?? null)) {
       return;
