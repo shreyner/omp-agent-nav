@@ -1,5 +1,5 @@
 import * as fs from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import { type WorkspaceBridge } from "./host";
 import { type MemoryBridge } from "./memory";
@@ -116,7 +116,13 @@ async function applyTaskAnchor(runtime: RuntimeModules, parent: SessionLike): Pr
 async function pointAnchorAt(anchorFile: string, actualFile: string): Promise<void> {
   // A session reopened through the anchor path reports the link as its file; linking that path
   // to itself made every later append fail with ELOOP.
-  const target = await fs.realpath(actualFile);
+  const target = await fs.realpath(actualFile).catch(async (error) => {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+    // A new session's transcript appears on its first flush; resolve the directory meanwhile.
+    return join(await fs.realpath(dirname(actualFile)), basename(actualFile));
+  });
   if (target === anchorFile) {
     return;
   }
