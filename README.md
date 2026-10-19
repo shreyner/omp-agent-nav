@@ -98,6 +98,10 @@ Upgrades of omp can break it even within a major version.
 - Verified: omp 18.11.0 – 18.12.1 (`SUPPORTED_OMP_VERSIONS` in [src/runtime.ts](src/runtime.ts)).
 - Other 18.x versions >= 18.11.0 load with a warning; older versions, pre-release / non-semver
   versions and the next major are rejected at startup.
+- The `omp` found on `PATH` must be the running installation (same version): Mnemopi and the
+  prompt renderer are loaded from it. A mismatch, e.g. running another install through `bunx`,
+  is rejected at startup.
+- Restart omp after updating the extension files: subagents reuse the bridge from the first load.
 
 ## Development
 

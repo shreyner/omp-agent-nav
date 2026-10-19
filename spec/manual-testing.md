@@ -58,7 +58,7 @@ Fixture `.omp/nav-manual-<runId>` останется в исходном про�
 
 1. Зафиксируй начальный cwd, omp --version, модель и session ID штатными средствами. Создай fixture <начальный cwd>/.omp/nav-approval-<runId>, в нём A как отдельный synthetic Git-репозиторий: initial branch main, один fixture-коммит с marker.txt=PROJECT_A (-c commit.gpgsign=false -c user.name="Manual fixture" -c user.email=fixture@example.invalid). Создай три одноразовых пустых каталога в системном tmp: <tmp>/nav-approval-<runId>-grant, -deny и -wg (обычные каталоги, без Git).
 
-2. M09-grant — объяви человеку: сейчас появится диалог session_move для <tmp>/…-grant, выбери approve. Вызови session_move один раз с dir=<tmp>/…-grant. Ожидание: диалог показывает причину «Цель вне принятых workspace-корней» и строку dir: <путь>; после approve queued receipt сменяется applied; pwd показывает tmp-каталог. Вернись session_move в A — диалога быть не должно. Повтори session_move в тот же <tmp>/…-grant — диалога снова быть не должно (корень уже подтверждён), переход applied; вернись в A.
+2. M09-grant — объяви человеку: сейчас появится диалог session_move для <tmp>/…-grant, выбери approve. Вызови session_move один раз с dir=<tmp>/…-grant. Ожидание: диалог показывает причину «Цель вне принятых workspace-корней» и строку dir: <путь>, а если корень отличается от пути (на macOS tmp под /var ведёт в /private/var) — dir: <путь> → grant: <корень>; после approve queued receipt сменяется applied; pwd показывает tmp-каталог. Вернись session_move в A — диалога быть не должно. Повтори session_move в тот же <tmp>/…-grant — диалога снова быть не должно (корень уже подтверждён), переход applied; вернись в A.
 
 3. M09-deny — объяви: появится диалог для <tmp>/…-deny, выбери deny. Вызови session_move dir=<tmp>/…-deny: вызов не выполняется (отказ пользователя виден в результате tool call), cwd остаётся A. Повтори вызов — диалог должен появиться снова (доказательство, что грант не выдан); человек снова выбирает deny, cwd не меняется.
 
@@ -66,7 +66,9 @@ Fixture `.omp/nav-manual-<runId>` останется в исходном про�
 
 5. M09-git — вызови session_move dir=<tmp>/…-grant/.git: диалога быть не должно, вызов завершается прежней ошибкой про Git metadata, cwd остаётся A.
 
-6. Сохрани <fixture>/manual-result.md: дата, version/model/session ID, runId, каждый M09-* как PASS/FAIL/NOT RUN с ожидание → факт, включая дословные слова человека о тексте диалогов (reason, dir) и об отсутствии диалога там, где он не нужен. В ответе дай короткую таблицу и путь отчёта. NOT RUN: M08 и всё вне approval-сценария; одноразовые tmp-каталоги можно оставить.
+6. M09-alias — создай symlink <fixture>/alias-deny → <tmp>/…-deny. Объяви: появится диалог session_move, в нём должна быть строка dir: <fixture>/alias-deny → grant: <реальный путь …-deny>; выбери deny. Вызови session_move dir=<fixture>/alias-deny. Ожидание: человек подтверждает, что диалог показал реальный корень, а не только путь ссылки; вызов отклонён, cwd остаётся A.
+
+7. Сохрани <fixture>/manual-result.md: дата, version/model/session ID, runId, каждый M09-* как PASS/FAIL/NOT RUN с ожидание → факт, включая дословные слова человека о тексте диалогов (reason, dir) и об отсутствии диалога там, где он не нужен. В ответе дай короткую таблицу и путь отчёта. NOT RUN: M08 и всё вне approval-сценария; одноразовые tmp-каталоги можно оставить.
 ```
 
 ## Покрытие и результат
@@ -81,7 +83,7 @@ Fixture `.omp/nav-manual-<runId>` останется в исходном про�
 | M06 | WT-06, NAV-01 | Чистый nav-cleanup удалён, ветка/коммит и исходные данные сохранены | PASS 2026-10-13 |
 | M07 | MEM-01, MEM-02, MEM-03 | Явные retain/recall в fixture; B/два WT общий банк, A/C изолированы | PASS 2026-10-13 |
 | M08 | TASK-03 | Async/main move/park/revive — отдельный будущий ручной прогон | не выполнено, вне этого промта |
-| M09-grant / M09-deny / M09-wg / M09-git | NAV-08, NAV-09 | Диалог session_move вне корней (reason+dir), approve → grant+move, повтор без диалога, deny без гранта, workspace_grant recovery, `.git` без диалога | выполнено 2026-10-15: deny/git PASS; wg — грант выдан (raw `roots`), но approval-диалог не снят; grant — «повтор без диалога» не подтверждён человеком. Причина найдена и исправлена 2026-10-19, нужен повтор — [verification.md](verification.md#v18) |
+| M09-grant / M09-deny / M09-wg / M09-git / M09-alias | NAV-08, NAV-09 | Диалог session_move вне корней (reason+dir, выдаваемый корень), approve → grant+move, повтор без диалога, deny без гранта, workspace_grant recovery, `.git` без диалога, symlink показывает реальный корень (M09-alias добавлен 2026-10-19) | выполнено 2026-10-15: deny/git PASS; wg — грант выдан (raw `roots`), но approval-диалог не снят; grant — «повтор без диалога» не подтверждён человеком. Причина найдена и исправлена 2026-10-19, нужен повтор — [verification.md](verification.md#v18) |
 
 Сценарий использует два worktree, чтобы завершившие task дети не блокировали очистку: `nav-probes` проверяет их target/память и защиту занятого каталога, `nav-cleanup` не получает детей и проверяет чистое удаление. Автоматические результаты не означают, что этот промт уже пройден.
 2026-10-13 прежний отдельный shell/Python-блок подготовки был выполнен в `/private/tmp/omp-nav-manual.a2fm0w2m`; проверены три Git-проекта и их baseline. Это исторический результат прежней инструкции с внешней подготовкой; его результаты не переносятся на новый промт, выполненный отдельно 2026-10-13 (см. [verification.md](verification.md#manual-model)).

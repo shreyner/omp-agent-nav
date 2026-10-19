@@ -27,8 +27,6 @@ export class WorkspaceGrantState {
   #manager: GrantManager;
   #sessionId: string;
   #grants = new Set<string>();
-  /** Last ledger entry on the current branch; a relocation that changes nothing writes nothing. */
-  #persisted?: string;
   #transition = new AsyncLocalStorage<boolean>();
   #setDirectories: GrantManager["setAdditionalDirectories"];
 
@@ -87,12 +85,15 @@ export class WorkspaceGrantState {
     this.#restore();
   }
 
-  #restore(): void {
-    const saved = this.#manager
+  /** Last ledger entry on the current branch (tree navigation can change the branch). */
+  #saved(): unknown {
+    return this.#manager
       .getBranch()
-      .findLast((entry) => entry.type === "custom" && entry.customType === GRANTS_ENTRY)?.data as
-      | { initialCwd?: unknown; grants?: unknown }
-      | undefined;
+      .findLast((entry) => entry.type === "custom" && entry.customType === GRANTS_ENTRY)?.data;
+  }
+
+  #restore(): void {
+    const saved = this.#saved() as { initialCwd?: unknown; grants?: unknown } | undefined;
     if (
       typeof saved?.initialCwd === "string" &&
       Array.isArray(saved.grants) &&
@@ -100,27 +101,21 @@ export class WorkspaceGrantState {
     ) {
       this.initialCwd = saved.initialCwd;
       this.#grants = new Set(saved.grants as string[]);
-      this.#persisted = this.#snapshot();
     } else {
       this.initialCwd = this.#canonical(this.#manager.getCwd());
       this.#grants = new Set(
         this.#manager.getAdditionalDirectories().map((directory) => this.#canonical(directory)),
       );
-      this.#persisted = undefined;
     }
   }
 
-  #snapshot(): string {
-    return JSON.stringify({ initialCwd: this.initialCwd, grants: [...this.#grants] });
-  }
-
+  /** Appends a ledger entry only when it differs from the branch's last one. */
   async #persist(): Promise<void> {
-    const snapshot = this.#snapshot();
-    if (snapshot === this.#persisted) {
+    const entry = { initialCwd: this.initialCwd, grants: [...this.#grants] };
+    if (JSON.stringify(entry) === JSON.stringify(this.#saved())) {
       return;
     }
-    this.#manager.appendCustomEntry(GRANTS_ENTRY, JSON.parse(snapshot));
-    this.#persisted = snapshot;
+    this.#manager.appendCustomEntry(GRANTS_ENTRY, entry);
     await this.#manager.flush();
   }
 

@@ -176,12 +176,6 @@ test("restoring a project tolerates its broken MCP server; a move does not (CR-5
   } as unknown as SessionLike;
   await expect(rescopeProjectMcp(runtime, session, root)).rejects.toThrow("MCP startup failed");
   expect(refreshed).toBe(0);
-  const stderr = process.stderr.write;
-  process.stderr.write = () => true;
-  try {
-    await rescopeProjectMcp(runtime, session, root, false);
-  } finally {
-    process.stderr.write = stderr;
-  }
+  expect(await rescopeProjectMcp(runtime, session, root, false)).toContain("MCP startup failed");
   expect(refreshed).toBe(1);
 });

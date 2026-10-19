@@ -41,7 +41,11 @@ function versionStatus(version: string): "verified" | "unverified" | "rejected" 
   return "unverified";
 }
 
-const warnedUnverifiedHosts = new Set<string>();
+// Process-wide: omp re-imports this module for every subagent session.
+const WARNED_HOSTS = Symbol.for("omp-agent-nav.warned-hosts");
+const processState = globalThis as { [WARNED_HOSTS]?: Set<string> };
+processState[WARNED_HOSTS] ??= new Set<string>();
+const warnedUnverifiedHosts = processState[WARNED_HOSTS];
 function warnUnverifiedHost(version: string): void {
   if (!warnedUnverifiedHosts.has(version)) {
     warnedUnverifiedHosts.add(version);
@@ -52,21 +56,27 @@ function warnUnverifiedHost(version: string): void {
 }
 
 export function findInstalledOmp(executable = Bun.which("omp")): string {
+  const directory = locateInstalledOmp(executable);
+  assertInstalledOmp(directory);
+  return directory;
+}
+
+function readPackage(packageRoot: string): { name?: string; version?: string } {
+  return JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
+}
+
+/** Package root of the omp on PATH, before any version gate. */
+function locateInstalledOmp(executable: string | null): string {
   if (!executable) {
     throw new Error("omp-agent-nav requires the installed npm omp executable on PATH.");
   }
   let directory = dirname(realpathSync(executable));
   while (true) {
-    const manifest = join(directory, "package.json");
-    if (existsSync(manifest)) {
-      const metadata = JSON.parse(readFileSync(manifest, "utf8")) as {
-        name?: string;
-        version?: string;
-      };
-      if (metadata.name === "@oh-my-pi/pi-coding-agent") {
-        assertInstalledOmp(directory);
-        return directory;
-      }
+    if (
+      existsSync(join(directory, "package.json")) &&
+      readPackage(directory).name === "@oh-my-pi/pi-coding-agent"
+    ) {
+      return directory;
     }
     const parent = dirname(directory);
     if (parent === directory) {
@@ -81,10 +91,7 @@ export function findInstalledOmp(executable = Bun.which("omp")): string {
 
 /** Returns the accepted package version. */
 export function assertInstalledOmp(packageRoot: string): string {
-  const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as {
-    name?: string;
-    version?: string;
-  };
+  const manifest = readPackage(packageRoot);
   const status = versionStatus(manifest.version ?? "");
   if (manifest.name !== "@oh-my-pi/pi-coding-agent" || status === "rejected") {
     throw new Error(
@@ -141,27 +148,34 @@ const hostedModules: Record<string, () => Promise<unknown>> = {
   "@oh-my-pi/pi-ai/api-registry": () => import("@oh-my-pi/pi-ai/api-registry"),
 };
 
-export function createRuntime(host: HostNamespace, sourceTestRoot?: string): RuntimeModules {
-  const packageRoot = sourceTestRoot ?? findInstalledOmp();
-  const installedVersion = assertInstalledOmp(packageRoot);
-  if (!sourceTestRoot) {
-    const hostStatus = versionStatus(String(host.VERSION));
-    if (hostStatus === "rejected") {
-      throw new Error(
-        `omp-agent-nav needs host version >= ${MIN_VERSION} and below ${NEXT_MAJOR_VERSION}; found ${String(host.VERSION)}.`,
-      );
-    }
-    if (hostStatus === "unverified") {
-      warnUnverifiedHost(String(host.VERSION));
-    }
-    // Mnemopi and the prompt renderer are imported as libraries from this package; they must
-    // be the code of the running omp, not of another installation that happens to be on PATH.
-    if (installedVersion !== String(host.VERSION)) {
-      throw new Error(
-        `omp-agent-nav loads Mnemopi and the prompt renderer from the omp on PATH (${installedVersion} at ${packageRoot}), which differs from the running omp ${String(host.VERSION)}. Put the running installation first on PATH.`,
-      );
-    }
+/**
+ * Mnemopi and the prompt renderer are imported as libraries from the omp on PATH; it must be the
+ * running omp, not another installation (bunx, a second global install) that happens to be first.
+ */
+function hostPackageRoot(host: HostNamespace): string {
+  const hostVersion = String(host.VERSION);
+  const hostStatus = versionStatus(hostVersion);
+  if (hostStatus === "rejected") {
+    throw new Error(
+      `omp-agent-nav needs host version >= ${MIN_VERSION} and below ${NEXT_MAJOR_VERSION}; found ${hostVersion}.`,
+    );
   }
+  if (hostStatus === "unverified") {
+    warnUnverifiedHost(hostVersion);
+  }
+  const packageRoot = locateInstalledOmp(Bun.which("omp"));
+  const installed = readPackage(packageRoot).version;
+  if (installed !== hostVersion) {
+    throw new Error(
+      `omp-agent-nav loads Mnemopi and the prompt renderer from the omp on PATH (${installed ?? "unknown"} at ${packageRoot}), which differs from the running omp ${hostVersion}. Put the running installation first on PATH.`,
+    );
+  }
+  return packageRoot;
+}
+
+export function createRuntime(host: HostNamespace, sourceTestRoot?: string): RuntimeModules {
+  const packageRoot = sourceTestRoot ?? hostPackageRoot(host);
+  assertInstalledOmp(packageRoot);
   const libraryImport = async <T>(specifier: string): Promise<T> => {
     const target = specifier.startsWith("@")
       ? Bun.resolveSync(specifier, packageRoot)

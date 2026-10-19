@@ -534,6 +534,26 @@ describe("native task destination scope", () => {
     await fs.appendFile(anchor, "");
   }, 30000);
 
+  test("a session opened through its legacy anchor link keeps that link (EXT-05)", async () => {
+    const f = await fixture(true);
+    await f.session.prompt("persist main");
+    const manager = f.session.sessionManager as unknown as {
+      getSessionFile(): string;
+      setSessionFile(file: string): Promise<void>;
+    };
+    const actual = manager.getSessionFile();
+    const legacy = join(f.root, "sessions", ".omp-agent-nav", f.session.sessionId);
+    await fs.mkdir(legacy, { recursive: true });
+    await fs.symlink(actual, `${legacy}.jsonl`);
+    await manager.setSessionFile(`${legacy}.jsonl`);
+    await syncTaskAnchor(runtime, f.session);
+    // Removing the link the session writes through would let the host's next rewrite fork it.
+    expect(await fs.realpath(`${legacy}.jsonl`)).toBe(await fs.realpath(actual));
+    await fs.appendFile(`${legacy}.jsonl`, "");
+    const anchor = (findNativeToolSession(f.session).getSessionFile as () => string)();
+    expect(await fs.realpath(anchor)).toBe(await fs.realpath(actual));
+  }, 30000);
+
   test.skipIf(!hasSeance)(
     "seance source fields reach the destination preflight (EXT-02)",
     async () => {

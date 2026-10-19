@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { resolve, sep } from "node:path";
+import { sep } from "node:path";
 
 import {
   expandPath,
@@ -80,6 +80,8 @@ export class WorkspaceBridge {
   #promptScopeChecked = new WeakSet<object>();
   #afterRelocation = new Set<(session: SessionLike) => Promise<void>>();
   #btwRunning = new WeakMap<object, number>();
+  /** Grant roots shown in approval dialogs, by requested dir, per main session manager. */
+  #approvedRoots = new WeakMap<object, Map<string, string>>();
   #workspaceApplying = new WeakSet<object>();
   #activeMain?: {
     sessionManager: SessionLike["sessionManager"];
@@ -511,9 +513,14 @@ export class WorkspaceBridge {
   async assertAllowedPath(ctx: ExtensionContextLike, path: string): Promise<string> {
     return await this.navigation(ctx).validateMove(path);
   }
+  /**
+   * `approved[i]`, when set, is the root the human saw for `dirs[i]`; a directory that now resolves
+   * elsewhere (a swapped symlink) fails the whole call before anything is granted.
+   */
   async grantWorkspaceDirs(
     ctx: ExtensionContextLike,
     dirs: string[],
+    approved: Array<string | undefined> = [],
   ): Promise<{ granted: string[]; skipped: string[]; roots: string[] }> {
     const session = this.currentSession(ctx);
     const navigation = this.coordinator(ctx).navigation;
@@ -524,12 +531,18 @@ export class WorkspaceBridge {
     }
     // Resolve every directory before granting any, so one bad path grants nothing.
     const candidates: string[] = [];
-    for (const dir of dirs) {
-      const lexical = resolve(session.sessionManager.getCwd(), dir);
+    for (const [index, dir] of dirs.entries()) {
+      const lexical = expandPath(dir, session.sessionManager.getCwd());
       if (lexical.split(sep).includes(".git")) {
         throw new Error("Git metadata cannot become a workspace root.");
       }
-      candidates.push((await resolveProjectIdentity(this.runtime, lexical)).mainRoot);
+      const candidate = (await resolveProjectIdentity(this.runtime, lexical)).mainRoot;
+      if (approved[index] !== undefined && approved[index] !== candidate) {
+        throw new Error(
+          `${dir} now resolves to ${candidate}, not the approved ${approved[index]}; nothing was granted.`,
+        );
+      }
+      candidates.push(candidate);
     }
     const initial = await navigation.initialRoot();
     const accepted = [
@@ -607,13 +620,60 @@ export class WorkspaceBridge {
     );
   }
 
+  #approvals(): Map<string, string> | undefined {
+    const active = this.#activeMain;
+    if (!active) {
+      return undefined;
+    }
+    let roots = this.#approvedRoots.get(active.sessionManager);
+    if (!roots) {
+      roots = new Map();
+      this.#approvedRoots.set(active.sessionManager, roots);
+    }
+    return roots;
+  }
+
+  /**
+   * The approval decision is made once, here: the dialog shows this root and execute may grant
+   * only this root. Re-deciding in execute would let a symlink swapped after approval through.
+   */
   sessionMoveApproval(
     args: unknown,
   ): "write" | { tier: "write"; policy: "prompt"; reason: string } {
     const dir = (args as { dir?: unknown } | null | undefined)?.dir;
-    return typeof dir === "string" && this.moveNeedsGrant(dir)
-      ? { tier: "write", policy: "prompt", reason: "Цель вне принятых workspace-корней" }
-      : "write";
+    if (typeof dir !== "string") {
+      return "write";
+    }
+    const root = this.moveNeedsGrant(dir) ? this.grantPreview(dir) : undefined;
+    if (!root) {
+      this.#approvals()?.delete(dir);
+      return "write";
+    }
+    this.#approvals()?.set(dir, root);
+    return { tier: "write", policy: "prompt", reason: "Цель вне принятых workspace-корней" };
+  }
+
+  /** Dialog line for `dir`; `record` (workspace_grant) remembers the shown root for execute. */
+  describeGrant(dir: unknown, record = false): string {
+    if (typeof dir !== "string") {
+      return `dir: ${String(dir)}`;
+    }
+    let root = this.#approvals()?.get(dir);
+    if (record) {
+      root = this.grantPreview(dir);
+      if (root) {
+        this.#approvals()?.set(dir, root);
+      }
+    }
+    return root && root !== dir ? `dir: ${dir} → grant: ${root}` : `dir: ${dir}`;
+  }
+
+  /** Consumes the root approved for `dir`, if any. */
+  takeApprovedRoot(dir: string): string | undefined {
+    const approvals = this.#approvals();
+    const root = approvals?.get(dir);
+    approvals?.delete(dir);
+    return root;
   }
 
   coordinator(ctx: ExtensionContextLike): WorkspaceCoordinator {
@@ -740,9 +800,10 @@ export class WorkspaceBridge {
       await this.refreshProjectPrompt(session);
       await this.notifyAfterRelocation(session);
     } catch (error) {
+      let warning: string | undefined;
       try {
         await session.sessionManager.rollbackMove(previous);
-        await this.#rescope(session, previous.cwd, false);
+        warning = await this.#rescope(session, previous.cwd, false);
         await this.#grantStates.get(session.sessionManager)?.synchronize();
         await session.refreshBaseSystemPrompt();
         await this.refreshProjectPrompt(session);
@@ -753,38 +814,37 @@ export class WorkspaceBridge {
         );
       }
       throw new Error(
-        `Workspace transition failed and was restored to ${previous.cwd}: ${error instanceof Error ? error.message : String(error)}`,
+        `Workspace transition failed and was restored to ${previous.cwd}${warning ? ` (partially: ${warning})` : ""}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
 
   /**
-   * Memory and project MCP of `cwd`. When restoring the previous project after a failed move
-   * (`strict: false`) their failures are logged instead of stopping the run: native startup
-   * tolerates flaky MCP servers too, and the memory gate still blocks the next model request
-   * while mandatory memory is down.
+   * Memory and project MCP of `cwd`. Restoring the previous project after a failed move
+   * (`strictMcp: false`) tolerates flaky MCP servers like native startup and returns the failure
+   * as a warning. Memory stays strict: a run must not continue without mandatory memory, and a
+   * failure here stops it; the next prompt retries the startup.
    */
-  async #rescopeResources(session: SessionLike, cwd: string, strict: boolean): Promise<void> {
-    try {
-      await this.#memory?.ensure(session, cwd);
-    } catch (error) {
-      if (strict) {
-        throw error;
-      }
-      process.stderr.write(`omp-agent-nav: restoring memory for ${cwd} failed: ${String(error)}\n`);
-    }
+  async #rescopeResources(
+    session: SessionLike,
+    cwd: string,
+    strictMcp: boolean,
+  ): Promise<string | undefined> {
+    await this.#memory?.ensure(session, cwd);
     if (typeof (session as Partial<RescopableSession>).getToolByName === "function") {
-      await rescopeProjectMcp(this.runtime, session, cwd, strict);
+      return await rescopeProjectMcp(this.runtime, session, cwd, strictMcp);
     }
+    return undefined;
   }
 
-  async #rescope(session: SessionLike, cwd: string, strict = true): Promise<void> {
+  async #rescope(session: SessionLike, cwd: string, strictMcp = true): Promise<string | undefined> {
     const owner = this.owner(session);
+    let warning: string | undefined;
     if (owner) {
       if (!(await owner.applyCwdChange(cwd))) {
         throw new Error(`The TUI could not prepare workspace ${cwd}.`);
       }
-      await this.#rescopeResources(session, cwd, strict);
+      warning = await this.#rescopeResources(session, cwd, strictMcp);
       await session.refreshSkillsAndCommands();
       owner.updateEditorBorderColor();
       await owner.reloadTodos();
@@ -803,9 +863,10 @@ export class WorkspaceBridge {
       await session.settings.reloadForCwd(cwd);
       await backend.rebindMemoryBackendForCwd(session);
       discovery.clearClaudePluginRootsCache();
-      await this.#rescopeResources(session, cwd, strict);
+      warning = await this.#rescopeResources(session, cwd, strictMcp);
       await session.refreshSkillsAndCommands();
     }
+    return warning;
   }
 }
 

@@ -281,3 +281,72 @@ test("relocation rollback restores storage cwd and context after preparation fai
   expect(f.manager.getCwd()).toBe(f.a);
   expect(calls).toBe(2);
 });
+
+test("restoring the previous project tolerates its broken MCP server but not lost memory (CR-5)", async () => {
+  const f = await fixture();
+  const owner = {
+    session: f.session,
+    sessionManager: f.manager,
+    applyCwdChange: async (cwd: string) => cwd === f.a,
+    updateEditorBorderColor: () => {},
+    reloadTodos: async () => {},
+    ui: { requestRender: () => {} },
+  };
+  f.session.moveSession = async (cwd) => {
+    f.manager.setCwdWithoutRelocation(cwd);
+  };
+  f.session.settleMemoryBackend = async () => {};
+  const { Settings } = await runtime.importModule<{
+    Settings: { isolated(values: Record<string, unknown>): SessionLike["settings"] };
+  }>("config/settings.ts");
+  const { MCPManager } = await runtime.importModule<{
+    MCPManager: new (
+      cwd: string,
+      cache: null,
+      loader: () => Promise<unknown>,
+    ) => { disconnectAll(): Promise<void> };
+  }>("mcp/manager.ts");
+  const broken = new MCPManager(f.a, null, async () => ({
+    configs: { broken: { type: "stdio", command: join(f.a, "missing-binary"), timeout: 500 } },
+    exaApiKeys: [],
+    sources: {
+      broken: { provider: "fixture", providerName: "Fixture", path: f.a, level: "project" },
+    },
+  }));
+  const settings = Settings.isolated({ "mcp.startupTimeoutMs": 0 });
+  const nativeScope = {
+    settings,
+    getSessionSpawns: () => "*",
+    mcpManager: broken,
+    enableMCP: true,
+  };
+  let published = 0;
+  Object.assign(f.session, {
+    settings,
+    getToolByName: (name: string) => (name === "read" ? { session: nativeScope } : undefined),
+    getActiveToolNames: () => ["read"],
+    refreshMCPTools: async () => {
+      published++;
+    },
+  });
+  try {
+    const bridge = new WorkspaceBridge(runtime);
+    bridge.captureOwner(owner as unknown as Parameters<typeof bridge.captureOwner>[0]);
+    const failure = await bridge.relocate(f.session, f.b).catch((error) => error);
+    expect(failure).not.toBeInstanceOf(WorkspaceRollbackError);
+    expect(String(failure)).toContain(`restored to ${f.a} (partially: MCP startup failed`);
+    expect(published).toBe(1);
+    expect(f.manager.getCwd()).toBe(f.a);
+    // Mandatory memory that cannot come back stops the run instead.
+    bridge.setMemoryBridge({
+      ensure: async (_session, cwd) => {
+        if (cwd === f.a) {
+          throw new Error("memory A is down");
+        }
+      },
+    });
+    await expect(bridge.relocate(f.session, f.b)).rejects.toBeInstanceOf(WorkspaceRollbackError);
+  } finally {
+    await broken.disconnectAll();
+  }
+});

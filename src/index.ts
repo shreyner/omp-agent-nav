@@ -106,42 +106,7 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
       return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
     },
   });
-  pi.registerTool({
-    name: "workspace_grant",
-    label: "workspace_grant",
-    description:
-      "Accept existing project directories into the workspace roots for session_move and task.cwd after explicit user approval. A worktree path resolves to its primary checkout. Pass all needed dirs in one call for a single approval.",
-    parameters: Type.Object(
-      {
-        dirs: Type.Array(
-          path("Existing directory to accept; a worktree resolves to its primary checkout."),
-          { minItems: 1 },
-        ),
-      },
-      { additionalProperties: false },
-    ),
-    approval: {
-      tier: "write",
-      policy: "prompt",
-      reason: "Expands workspace roots that session_move and task.cwd may target",
-    },
-    formatApprovalDetails: (args) => {
-      if (args && typeof args === "object" && "dirs" in args && Array.isArray(args.dirs)) {
-        return args.dirs.map((dir) => grantDetail(bridge, dir));
-      }
-      return undefined;
-    },
-    loadMode: "essential",
-    execute: async (id, params, signal, _update, ctx) => {
-      if (ctx.agent.kind !== "main") {
-        throw new Error("Workspace grants are available only to the main session.");
-      }
-      signal?.throwIfAborted();
-      bridge.coordinator(ctx).assertDirectToolCall(id);
-      const result = await bridge.grantWorkspaceDirs(ctx, params.dirs as string[]);
-      return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
-    },
-  });
+  registerWorkspaceGrantTool(pi, bridge, Type);
   pi.on("session_start", async (_event, ctx) => {
     if (ctx.agent.kind === "main") {
       bridge.coordinator(ctx);
@@ -192,10 +157,57 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
   });
 }
 
-/** The human approves the root that is actually granted, not only the path the model sent. */
-function grantDetail(bridge: WorkspaceBridge, dir: unknown): string {
-  const root = bridge.grantPreview(dir);
-  return root && root !== dir ? `dir: ${String(dir)} → grant: ${root}` : `dir: ${String(dir)}`;
+export function registerWorkspaceGrantTool(
+  pi: ExtensionApiLike,
+  bridge: WorkspaceBridge,
+  type: SchemaBuilder,
+): void {
+  pi.registerTool({
+    name: "workspace_grant",
+    label: "workspace_grant",
+    description:
+      "Accept existing project directories into the workspace roots for session_move and task.cwd after explicit user approval. A worktree path resolves to its primary checkout. Pass all needed dirs in one call for a single approval.",
+    parameters: type.Object(
+      {
+        dirs: type.Array(
+          type.String({
+            description:
+              "Existing directory to accept; a worktree resolves to its primary checkout.",
+            minLength: 1,
+          }),
+          { minItems: 1 },
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    approval: {
+      tier: "write",
+      policy: "prompt",
+      reason: "Expands workspace roots that session_move and task.cwd may target",
+    },
+    // The human approves the roots that are actually granted, not only the paths the model sent.
+    formatApprovalDetails: (args) => {
+      if (args && typeof args === "object" && "dirs" in args && Array.isArray(args.dirs)) {
+        return args.dirs.map((dir) => bridge.describeGrant(dir, true));
+      }
+      return undefined;
+    },
+    loadMode: "essential",
+    execute: async (id, params, signal, _update, ctx) => {
+      if (ctx.agent.kind !== "main") {
+        throw new Error("Workspace grants are available only to the main session.");
+      }
+      signal?.throwIfAborted();
+      bridge.coordinator(ctx).assertDirectToolCall(id);
+      const dirs = params.dirs as string[];
+      const result = await bridge.grantWorkspaceDirs(
+        ctx,
+        dirs,
+        dirs.map((dir) => bridge.takeApprovedRoot(dir)),
+      );
+      return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+    },
+  });
 }
 
 export function registerSessionMoveTool(
@@ -220,10 +232,7 @@ export function registerSessionMoveTool(
     approval: (args) => bridge.sessionMoveApproval(args),
     formatApprovalDetails: (args) => {
       const dir = (args as { dir?: unknown } | null | undefined)?.dir;
-      if (typeof dir !== "string") {
-        return undefined;
-      }
-      return bridge.moveNeedsGrant(dir) ? [grantDetail(bridge, dir)] : [`dir: ${dir}`];
+      return typeof dir === "string" ? [bridge.describeGrant(dir)] : undefined;
     },
     loadMode: "essential",
     execute: async (id, params, signal, _update, ctx) => {
@@ -236,8 +245,11 @@ export function registerSessionMoveTool(
         throw new Error("The omp-nav context bridge is unavailable.");
       }
       const dir = params.dir as string;
-      if (bridge.moveNeedsGrant(dir)) {
-        await bridge.grantWorkspaceDirs(ctx, [dir]);
+      // Only a root the approval dialog showed is granted; a target that changed since approval
+      // gets no grant and fails validation with the usual workspace_grant hint.
+      const approved = bridge.takeApprovedRoot(dir);
+      if (approved !== undefined && bridge.moveNeedsGrant(dir)) {
+        await bridge.grantWorkspaceDirs(ctx, [dir], [approved]);
       }
       const result = await ctx.requestWorkspaceChange({ action: "move", dir });
       return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };

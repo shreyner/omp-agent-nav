@@ -123,7 +123,8 @@ async function pointAnchorAt(anchorFile: string, actualFile: string): Promise<vo
     // A new session's transcript appears on its first flush; resolve the directory meanwhile.
     return join(await fs.realpath(dirname(actualFile)), basename(actualFile));
   });
-  if (target === anchorFile) {
+  // Compare canonical forms: the sessions root itself may sit behind a symlink.
+  if (target === join(await fs.realpath(dirname(anchorFile)), basename(anchorFile))) {
     return;
   }
   const next = `${anchorFile}.next-${process.pid}`;
@@ -191,6 +192,7 @@ interface TaskResult {
 export interface ScopedMcpManager {
   disconnectAll(): Promise<void>;
   getTools(): unknown[];
+  waitForStartup(timeoutMs: number): Promise<{ failed: unknown[]; pending: unknown[] }>;
 }
 interface TaskGate {
   acquire(signal?: AbortSignal): Promise<void>;
@@ -297,6 +299,11 @@ export async function createScopedMcpManager(
   }
 }
 
+async function mcpReady(manager: ScopedMcpManager): Promise<boolean> {
+  const startup = await manager.waitForStartup(mcpStartupWait.ms);
+  return !startup.failed.length && !startup.pending.length;
+}
+
 /** After preflight a child may hold the manager, so later failures must not close it. */
 function poolScopedMcp(parent: SessionLike, target: string, scoped: NativeTaskSession): void {
   const manager = ownedMcpManagers.get(scoped);
@@ -384,7 +391,14 @@ export async function prepareTaskScope(
     })
   ).skills;
   if (native.enableMCP !== false) {
-    const pooled = pooledMcpManagers.get(parent)?.get(target);
+    const pool = pooledMcpManagers.get(parent);
+    let pooled = pool?.get(target);
+    if (pooled && !(await mcpReady(pooled))) {
+      // Its servers failed since it was pooled: later calls get a fresh, strictly started one.
+      // Children holding the old manager keep it until the main session closes.
+      pool?.delete(target);
+      pooled = undefined;
+    }
     if (pooled) {
       scoped.mcpManager = pooled;
     } else {

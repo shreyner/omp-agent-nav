@@ -1,10 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
 import * as fs from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { WorkspaceBridge, type WorkspaceCoordinator, WorkspaceGrantState } from "../src/host";
-import { registerSessionMoveTool } from "../src/index";
+import { registerSessionMoveTool, registerWorkspaceGrantTool } from "../src/index";
 import { NavigationError } from "../src/navigation";
 import { createRuntime, findInstalledOmp } from "../src/runtime";
 import {
@@ -29,12 +29,7 @@ const { SessionManager } = await runtime.importModule<{
 const { Settings } = await runtime.importModule<{
   Settings: { isolated(): SessionLike["settings"] };
 }>("config/settings.ts");
-const { Type } = await runtime.importModule<{
-  Type: {
-    Object(properties: Record<string, unknown>, options?: Record<string, unknown>): unknown;
-    String(options?: Record<string, unknown>): unknown;
-  };
-}>("@oh-my-pi/omptype/typebox");
+const { Type } = await runtime.importModule<{ Type: unknown }>("@oh-my-pi/omptype/typebox");
 
 async function git(cwd: string, ...args: string[]): Promise<void> {
   const child = Bun.spawn(["git", ...args], { cwd, stdout: "ignore", stderr: "pipe" });
@@ -93,21 +88,19 @@ async function fixture() {
     requestWorkspaceChange: (request: WorkspaceRequest) => coordinator.request(request),
   } as unknown as ExtensionContextLike;
   coordinator = bridge.coordinator(ctx);
-  let definition: ToolDefinitionLike | undefined;
+  const tools = new Map<string, ToolDefinitionLike>();
   const pi = {
     registerTool: (tool: ToolDefinitionLike) => {
-      if (tool.name === "session_move") {
-        definition = tool;
-      }
+      tools.set(tool.name, tool);
     },
     on: () => {},
     registerCommand: () => {},
   } as unknown as ExtensionApiLike;
-  registerSessionMoveTool(
-    pi,
-    bridge,
-    Type as unknown as Parameters<typeof registerSessionMoveTool>[2],
-  );
+  const schema = Type as unknown as Parameters<typeof registerSessionMoveTool>[2];
+  registerSessionMoveTool(pi, bridge, schema);
+  registerWorkspaceGrantTool(pi, bridge, schema);
+  const definition = tools.get("session_move");
+  const grantTool = tools.get("workspace_grant")!;
   const owner = {
     sessionManager: manager,
     applyCwdChange: async () => true,
@@ -119,14 +112,40 @@ async function fixture() {
   const capture = () =>
     bridge.captureOwner(owner as unknown as Parameters<typeof bridge.captureOwner>[0]);
   const approval = (args: unknown) => (definition!.approval as (args: unknown) => unknown)(args);
-  const execute = async (dir: string) => {
+  const admit = async (name: string, args: unknown) => {
     const id = `call-${Math.random().toString(36).slice(2)}`;
     const gate = session.agent.beforeToolCall as (context: ToolCallContext) => Promise<unknown>;
     await gate({
-      assistantMessage: { content: [{ type: "toolCall", name: "session_move" }] },
-      toolCall: { id, name: "session_move", arguments: { dir } },
+      assistantMessage: { content: [{ type: "toolCall", name }] },
+      toolCall: { id, name, arguments: args },
     });
-    return await definition!.execute(id, { dir }, undefined, undefined, ctx);
+    return id;
+  };
+  /** Execute only, as when the target changes after the host evaluated approval. */
+  const executeRaw = async (dir: string) =>
+    await definition!.execute(
+      await admit("session_move", { dir }),
+      { dir },
+      undefined,
+      undefined,
+      ctx,
+    );
+  /** Host order: approval decision, dialog details, then execute. */
+  const execute = async (dir: string) => {
+    approval({ dir });
+    definition!.formatApprovalDetails?.({ dir });
+    return await executeRaw(dir);
+  };
+  const grant = async (dirs: string[], swap?: () => Promise<void>) => {
+    grantTool.formatApprovalDetails?.({ dirs });
+    await swap?.();
+    return await grantTool.execute(
+      await admit("workspace_grant", { dirs }),
+      { dirs },
+      undefined,
+      undefined,
+      ctx,
+    );
   };
   return {
     root,
@@ -140,6 +159,9 @@ async function fixture() {
     capture,
     approval,
     execute,
+    executeRaw,
+    grant,
+    grantTool,
     definition,
     messages,
   };
@@ -278,6 +300,76 @@ test("a missing target and a worktree of an accepted project need no approval", 
     ]);
     await f.bridge.grantWorkspaceDirs(f.ctx, [f.c]);
     expect(f.approval({ dir: worktree })).toBe("write");
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
+test("a target swapped after approval is never granted without the dialog", async () => {
+  const f = await fixture();
+  f.capture();
+  try {
+    const sub = join(f.a, "sub");
+    await fs.mkdir(sub);
+    const link = join(f.a, "link");
+    await fs.symlink(sub, link);
+    // Approved as an in-root move (no dialog), then the link is swapped to an outside project.
+    expect(f.approval({ dir: link })).toBe("write");
+    await fs.rm(link);
+    await fs.symlink(f.c, link);
+    await expect(f.executeRaw(link)).rejects.toThrow("outside the accepted workspace roots");
+    expect(f.coordinator.navigation.options.getWorkspaceRoots()).toEqual([]);
+    // The dialog showed C; the link now leads to B: the shown root is not granted silently either.
+    expect(f.approval({ dir: link })).toEqual(expect.objectContaining({ policy: "prompt" }));
+    expect(f.definition?.formatApprovalDetails?.({ dir: link })).toEqual([
+      `dir: ${link} → grant: ${f.c}`,
+    ]);
+    await fs.rm(link);
+    await fs.symlink(f.b, link);
+    await expect(f.executeRaw(link)).rejects.toThrow(`not the approved ${f.c}`);
+    expect(f.coordinator.navigation.options.getWorkspaceRoots()).toEqual([]);
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
+test("workspace_grant grants only the roots its dialog showed", async () => {
+  const f = await fixture();
+  f.capture();
+  try {
+    const link = join(f.root, "link");
+    await fs.symlink(f.c, link);
+    expect(f.grantTool.formatApprovalDetails?.({ dirs: [link] })).toEqual([
+      `dir: ${link} → grant: ${f.c}`,
+    ]);
+    const swap = async () => {
+      await fs.rm(link);
+      await fs.symlink(f.b, link);
+    };
+    await expect(f.grant([link], swap)).rejects.toThrow(`not the approved ${f.c}`);
+    expect(f.coordinator.navigation.options.getWorkspaceRoots()).toEqual([]);
+    const granted = (await f.grant([link])) as { details: { granted: string[] } };
+    expect(granted.details.granted).toEqual([f.b]);
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
+test("`~` resolves to the home directory in the dialog and in the grant", async () => {
+  const f = await fixture();
+  f.capture();
+  try {
+    // A decoy literal `~` directory in the cwd must not be what gets granted. The session is
+    // in-memory: granting the real home touches nothing on disk. (Bun caches HOME at startup.)
+    await fs.mkdir(join(f.a, "~"));
+    const preview = f.bridge.grantPreview("~");
+    expect(preview).toBeDefined();
+    expect(f.grantTool.formatApprovalDetails?.({ dirs: ["~"] })).toEqual([
+      `dir: ~ → grant: ${preview}`,
+    ]);
+    const granted = (await f.grant(["~"])) as { details: { granted: string[] } };
+    expect(granted.details.granted).toEqual([preview!]);
+    expect(preview).toBe(await fs.realpath(homedir()));
   } finally {
     f.coordinator.dispose();
   }

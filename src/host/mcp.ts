@@ -22,18 +22,18 @@ export interface RescopableSession extends SessionLike {
 }
 
 /**
- * `strict: false` is for restoring the previous project after a failed move: flaky servers are
- * logged and the tools that did start are published, as native startup does.
+ * `strict: false` is for restoring the previous project after a failed move: the tools that did
+ * start are published, as native startup does, and the failure is returned as a warning.
  */
 export async function rescopeProjectMcp(
   runtime: RuntimeModules,
   session: SessionLike,
   cwd: string,
   strict = true,
-): Promise<void> {
+): Promise<string | undefined> {
   const native = findNativeToolSession(session);
   if (native.enableMCP === false) {
-    return;
+    return undefined;
   }
   const manager = native.mcpManager as ScopedMcp | undefined;
   if (
@@ -75,12 +75,13 @@ export async function rescopeProjectMcp(
         : undefined,
   });
   const startup = await manager.waitForStartup(mcpStartupWait.ms);
+  let warning: string | undefined;
   if (result.errors.size || startup.failed.length || startup.pending.length) {
-    const detail = `MCP startup failed for ${cwd}: ${JSON.stringify({ errors: [...result.errors], ...startup })}`;
+    warning = `MCP startup failed for ${cwd}: ${JSON.stringify({ errors: [...result.errors], ...startup })}`;
     if (strict) {
-      throw new Error(detail);
+      throw new Error(warning);
     }
-    process.stderr.write(`omp-agent-nav: ${detail}\n`);
   }
   await active.refreshMCPTools(manager.getTools());
+  return warning;
 }
