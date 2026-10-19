@@ -102,8 +102,8 @@ Upgrades of omp can break it even within a major version.
 ## Development
 
 ```sh
-bun install        # Biome only; omp is an optional peer and is not installed locally
-bun run check      # bundle with external packages + Biome gate
+bun install        # Biome, TypeScript, Bun types; omp is an optional peer and is not installed locally
+bun run check      # tsc --noEmit + bundle with external packages + Biome gate
 bun run test       # full suite (~1 min)
 bun run matrix     # run the suite against every verified omp version (npm installs under /tmp)
 ```

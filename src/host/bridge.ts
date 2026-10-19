@@ -256,7 +256,7 @@ export class WorkspaceBridge {
     );
     const inline =
       values.inlineToolDescriptors === "on" ||
-      (values.inlineToolDescriptors === "auto" && active.model?.id.includes("gemini"));
+      (values.inlineToolDescriptors === "auto" && active.model?.id.includes("gemini") === true);
     const names = active.getEnabledToolNames();
     const tools = new Map(
       active.getAllToolNames().map((name) => [name, active.getToolByName(name)]),
@@ -455,7 +455,7 @@ export class WorkspaceBridge {
       evalPreludes: active.getEvalPreludes(),
       xdevTools: xdevEntries,
       model:
-        native.getActiveModelString?.() ??
+        (native.getActiveModelString as (() => string | undefined) | undefined)?.() ??
         (active.model ? `${active.model.provider}/${active.model.id}` : undefined),
       includeModelInPrompt: values.includeModelInPrompt,
       scoutAvailable: modules.spawn.isScoutSpawnable(
@@ -463,7 +463,10 @@ export class WorkspaceBridge {
         native.getSessionSpawns?.() ?? "*",
       ),
       delegationBias: modules.policy.sessionDelegationBias(native),
-      taskIrcEnabled: modules.irc.isIrcEnabled(session.settings, native.taskDepth ?? 0),
+      taskIrcEnabled: modules.irc.isIrcEnabled(
+        session.settings,
+        (native.taskDepth as number | undefined) ?? 0,
+      ),
       autoQaEnabled: modules.autoQa.isAutoQaEnabled(session.settings),
       secretsEnabled: active.obfuscator?.obfuscates() === true,
       writeTransportOnly:
@@ -609,13 +612,15 @@ export class WorkspaceBridge {
         getLiveAgentCwds: () =>
           this.runtime.host.AgentRegistry.global()
             .list()
-            .filter((ref) => ref.kind !== "main" && ref.session)
             .flatMap((ref) => {
-              const settings = ref.session!.settings as typeof ref.session.settings & {
+              if (ref.kind === "main" || !ref.session) {
+                return [];
+              }
+              const settings = ref.session.settings as SessionLike["settings"] & {
                 getCwd?(): string;
               };
               return [
-                ref.session!.sessionManager.getCwd(),
+                ref.session.sessionManager.getCwd(),
                 ...(settings.getCwd ? [settings.getCwd()] : []),
               ];
             }),

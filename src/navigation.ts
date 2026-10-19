@@ -458,7 +458,7 @@ export class WorkspaceNavigation {
       }
       return { path: actual, branch, baseCommit, mainRoot: identity.mainRoot, ...result };
     } catch (error) {
-      await this.#worktreeFailure(error, {
+      return await this.#worktreeFailure(error, {
         target,
         identity,
         repository,
@@ -474,7 +474,7 @@ export class WorkspaceNavigation {
 
   async #resolveWorktreeDestination(
     request: { branch: string; path?: string; ref?: string },
-    identity: { mainRoot: string; commonDir?: string },
+    identity: ProjectIdentity,
     repository: {
       refExists(ref: string): Promise<boolean>;
       resolveRef(ref?: string): Promise<string | null | undefined>;
@@ -599,16 +599,8 @@ export class WorkspaceNavigation {
   }
 
   async #pristineWorktree(
-    destination: { resolveRef(ref: string): Promise<string>; currentBranch(): Promise<string> },
-    state:
-      | {
-          available?: boolean;
-          dirty?: boolean;
-          locked?: boolean;
-          inUse?: boolean;
-          detached?: boolean;
-        }
-      | undefined,
+    destination: GitRepository,
+    state: WorktreeState | undefined,
     baseCommit: string,
     branch: string,
   ): Promise<boolean> {
@@ -632,9 +624,7 @@ export class WorkspaceNavigation {
         worktreeRemove(path: string, force: boolean): Promise<boolean>;
       };
     },
-    destination:
-      | { resolveRef(ref: string): Promise<string>; currentBranch(): Promise<string> }
-      | undefined,
+    destination: GitRepository | null,
     stat: unknown,
     reserved: boolean,
     owned: boolean,

@@ -41,10 +41,10 @@ function versionStatus(version: string): "verified" | "unverified" | "rejected" 
   return "unverified";
 }
 
-let warnedUnverifiedHost = false;
+const warnedUnverifiedHosts = new Set<string>();
 function warnUnverifiedHost(version: string): void {
-  if (!warnedUnverifiedHost) {
-    warnedUnverifiedHost = true;
+  if (!warnedUnverifiedHosts.has(version)) {
+    warnedUnverifiedHosts.add(version);
     console.warn(
       `omp-agent-nav: host ${version} is newer than the verified matrix (${SUPPORTED_OMP_VERSIONS.join(", ")}); loading unverified.`,
     );

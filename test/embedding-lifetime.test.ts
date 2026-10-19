@@ -54,7 +54,10 @@ process.stdout.write(JSON.stringify({passed:true,terminations,mockCalls:model.ca
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
   ]);
-  expect(stderr).toBe("");
+  // A host newer than the verified matrix adds one expected warning line.
+  expect(
+    stderr.replace(/^omp-agent-nav: host \S+ is newer than the verified matrix.*\n/m, ""),
+  ).toBe("");
   expect(code).toBe(0);
   expect(JSON.parse(stdout)).toEqual({ passed: true, terminations: 1, mockCalls: 2 });
 }, 30000);

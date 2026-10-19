@@ -148,6 +148,14 @@ export interface ScopedMcpManager {
   disconnectAll(): Promise<void>;
   getTools(): unknown[];
 }
+interface TaskGate {
+  acquire(signal?: AbortSignal): Promise<void>;
+  release(): void;
+  resize(limit: number): void;
+}
+interface TaskToolFactory {
+  create(session: NativeTaskSession): Promise<NativeTask>;
+}
 /** Shared budget for target-MCP startup readiness; mutable for tests. */
 export const mcpStartupWait = { ms: 30_000 };
 const ownedMcpManagers = new WeakMap<NativeTaskSession, ScopedMcpManager>();
@@ -326,9 +334,7 @@ export async function installTaskTool(
   _memory: MemoryBridge,
 ): Promise<void> {
   const [{ TaskTool }, { getTaskSchema }, registry, policy, { Semaphore }] = await Promise.all([
-    runtime.importModule<{ TaskTool: { create(session: NativeTaskSession): Promise<NativeTask> } }>(
-      "task/index.ts",
-    ),
+    runtime.importModule<{ TaskTool: TaskToolFactory }>("task/index.ts"),
     runtime.importModule<{ getTaskSchema(options: Record<string, unknown>): Schema }>(
       "task/types.ts",
     ),
@@ -338,17 +344,9 @@ export async function installTaskTool(
         request: Record<string, unknown>,
       ): Promise<{ effectiveAgent: { blocking?: boolean } }>;
     }>("task/structured-subagent.ts"),
-    runtime.importModule<{
-      Semaphore: new (
-        limit: number,
-      ) => {
-        acquire(signal?: AbortSignal): Promise<void>;
-        release(): void;
-        resize(limit: number): void;
-      };
-    }>("task/parallel.ts"),
+    runtime.importModule<{ Semaphore: new (limit: number) => TaskGate }>("task/parallel.ts"),
   ]);
-  const gates = new WeakMap<SessionLike, InstanceType<typeof Semaphore>>();
+  const gates = new WeakMap<SessionLike, TaskGate>();
   const schemaOptions = {
     isolationEnabled: true,
     effortEnabled: true,
@@ -403,7 +401,15 @@ export async function installTaskTool(
     async execute(id, raw, signal, onUpdate, ctx) {
       const parent = bridge.currentSession(ctx);
       if (ctx.agent.kind === "sub") {
-        return await runSubagentTask({ id, raw, signal, onUpdate, parent, advertisedTask });
+        return await runSubagentTask({
+          id,
+          raw,
+          signal,
+          onUpdate,
+          parent,
+          advertisedTask,
+          taskTool: TaskTool,
+        });
       }
       const sourceCwd = parent.sessionManager.getCwd();
       const batch = Array.isArray(raw.tasks);
@@ -550,11 +556,13 @@ async function runSubagentTask(deps: {
   onUpdate: unknown;
   parent: SessionLike;
   advertisedTask: NativeTask | undefined;
+  taskTool: TaskToolFactory;
 }): Promise<TaskResult> {
   if (hasCwdAssignment(deps.raw)) {
     throw new Error("Only the main session can assign task.cwd to a subagent.");
   }
-  const task = deps.advertisedTask ?? (await TaskTool.create(findNativeToolSession(deps.parent)));
+  const task =
+    deps.advertisedTask ?? (await deps.taskTool.create(findNativeToolSession(deps.parent)));
   return await task.execute(
     deps.id,
     deps.raw,
@@ -590,10 +598,7 @@ function assertTaskRequestShape(
   return items;
 }
 
-function wrapOwnedAsyncJobs(
-  scoped: { asyncJobManager?: unknown; getAgentId?: unknown },
-  gate: Semaphore,
-): void {
+function wrapOwnedAsyncJobs(scoped: NativeTaskSession, gate: TaskGate): void {
   const manager = scoped.asyncJobManager as
     | {
         register(
@@ -693,7 +698,7 @@ async function runTaskInvocation(
     batch: boolean;
     snapshots: TaskResult[];
     merged: () => TaskResult;
-    gate: Semaphore;
+    gate: TaskGate;
     preflights: Array<{ effectiveAgent: { blocking?: boolean } }>;
   },
   index: number,

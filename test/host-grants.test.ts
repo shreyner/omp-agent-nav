@@ -137,19 +137,19 @@ test("an isolated child protects its source worktree even while its manager cwd 
   const child = {
     sessionManager: SessionManager.inMemory(sandbox),
     settings: rawChildSettings,
-  } as SessionLike;
+  } as unknown as SessionLike;
   const refs = [
     { id: "main", kind: "main" as const, status: "running", session },
     { id: "isolated", kind: "sub" as const, status: "running", session: child },
   ];
   const host = {
     AgentRegistry: { global: () => ({ get: () => refs[0], list: () => refs }) },
-  } as HostNamespace;
+  } as unknown as HostNamespace;
   const bridge = new WorkspaceBridge({ ...runtime, host });
   const ctx = {
     agent: { id: "main", kind: "main" },
     sessionManager: manager,
-  } as ExtensionContextLike;
+  } as unknown as ExtensionContextLike;
   const coordinator = bridge.coordinator(ctx);
   try {
     const worktrees = await coordinator.navigation.listWorktrees();
@@ -198,12 +198,12 @@ test("workspace_grant resolves a worktree to its primary, skips accepted roots, 
   const refs = [{ id: "main", kind: "main" as const, status: "running", session }];
   const host = {
     AgentRegistry: { global: () => ({ get: () => refs[0], list: () => refs }) },
-  } as HostNamespace;
+  } as unknown as HostNamespace;
   const bridge = new WorkspaceBridge({ ...runtime, host });
   const ctx = {
     agent: { id: "main", kind: "main" },
     sessionManager: manager,
-  } as ExtensionContextLike;
+  } as unknown as ExtensionContextLike;
   const coordinator = bridge.coordinator(ctx);
   try {
     const failure = await coordinator.navigation.validateMove(otherWt).then(

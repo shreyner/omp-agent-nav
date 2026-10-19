@@ -165,7 +165,7 @@ export default async function(pi) {
       config,
       `extensions:\n  - ${JSON.stringify(fixture)}\n  - ${JSON.stringify(join(import.meta.dir, "..", "src", "index.ts"))}\nmemory:\n  backend: mnemopi\nmnemopi:\n  dbPath: ${JSON.stringify(join(root, "memory", "mnemopi.db"))}\n  bank: task-fixture\n  noEmbeddings: true\n  llmMode: none\n  autoRecall: false\n  autoRetain: true\nasync:\n  enabled: false\ntask:\n  structured: false\n  enableLsp: false\n  maxConcurrency: 3\nlsp:\n  enabled: false\nautolearn:\n  enabled: false\nskills:\n  enableAgentsUser: false\n  enableCodexUser: false\n  enableClaudeUser: false\n  enablePiUser: false\nmodelRoles:\n  default: bundled-task/main\n  task: bundled-task/main\nsetupVersion: 2\nstartup:\n  quiet: true\n  setupWizard: false\n  showSplash: false\n  checkUpdate: false\nmarketplace:\n  autoUpdate: false\n`,
     );
-    const env = {
+    const env: Record<string, string | undefined> = {
       ...process.env,
       PI_CODING_AGENT_DIR: agentDir,
       PI_CONFIG_DIR: relative(homedir(), join(root, "configuration")),

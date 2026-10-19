@@ -164,7 +164,7 @@ export default async function(pi) {
       config,
       `extensions:\n  - ${JSON.stringify(fixture)}\nmemory:\n  backend: mnemopi\nmnemopi:\n  dbPath: ${JSON.stringify(join(root, "memory", "mnemopi.db"))}\n  bank: fixture-prefix\n  noEmbeddings: true\n  llmMode: none\n  autoRecall: false\n  autoRetain: false\nasync:\n  enabled: false\nlsp:\n  enabled: false\nautolearn:\n  enabled: false\nsetupVersion: 2\nstartup:\n  quiet: true\n  setupWizard: false\n  checkUpdate: false\nmarketplace:\n  autoUpdate: false\n`,
     );
-    const env = {
+    const env: Record<string, string | undefined> = {
       ...process.env,
       PI_CODING_AGENT_DIR: agentDir,
       PI_CONFIG_DIR: relative(homedir(), join(root, "configuration")),

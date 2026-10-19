@@ -77,14 +77,14 @@ async function fixture() {
   const refs = [{ id: "main", kind: "main" as const, status: "running", session }];
   const host = {
     AgentRegistry: { global: () => ({ get: () => refs[0], list: () => refs }) },
-  } as HostNamespace;
+  } as unknown as HostNamespace;
   const bridge = new WorkspaceBridge({ ...runtime, host });
   let coordinator!: WorkspaceCoordinator;
   const ctx = {
     agent: { id: "main", kind: "main" },
     sessionManager: manager,
     requestWorkspaceChange: (request: WorkspaceRequest) => coordinator.request(request),
-  } as ExtensionContextLike;
+  } as unknown as ExtensionContextLike;
   coordinator = bridge.coordinator(ctx);
   let definition: ToolDefinitionLike | undefined;
   const pi = {
@@ -95,7 +95,7 @@ async function fixture() {
     },
     on: () => {},
     registerCommand: () => {},
-  } as ExtensionApiLike;
+  } as unknown as ExtensionApiLike;
   registerSessionMoveTool(
     pi,
     bridge,
@@ -116,8 +116,8 @@ async function fixture() {
     const id = `call-${Math.random().toString(36).slice(2)}`;
     const gate = session.agent.beforeToolCall as (context: ToolCallContext) => Promise<unknown>;
     await gate({
-      assistantMessage: { content: [{ type: "toolCall", id, name: "session_move" }] },
-      toolCall: { id, name: "session_move" },
+      assistantMessage: { content: [{ type: "toolCall", name: "session_move" }] },
+      toolCall: { id, name: "session_move", arguments: { dir } },
     });
     return await definition!.execute(id, { dir }, undefined, undefined, ctx);
   };

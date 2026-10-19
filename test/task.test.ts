@@ -564,7 +564,7 @@ describe("native task destination scope", () => {
       f.ctx,
     );
     await started.promise;
-    const child = runtime.host.AgentRegistry.global().get("active-B") as {
+    const child = runtime.host.AgentRegistry.global().get("active-B") as unknown as {
       sessionFile: string;
       session: NativeSession;
     };
@@ -825,7 +825,7 @@ describe("native task destination scope", () => {
     const oldAnchor = (native.getSessionFile as () => string)();
     const oldActualFile = await fs.realpath(oldAnchor);
     const oldId = f.session.sessionId;
-    const childRef = runtime.host.AgentRegistry.global().get("old-parent-B") as {
+    const childRef = runtime.host.AgentRegistry.global().get("old-parent-B") as unknown as {
       sessionFile: string;
       session: NativeSession;
     };

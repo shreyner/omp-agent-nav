@@ -27,7 +27,8 @@
   },
   "scripts": {
     "test": "bun test ./test",
-    "check": "bun build ./src/index.ts --target=bun --packages=external --outdir=dist && biome check --error-on-warnings .",
+    "check": "tsc -p . && bun build ./src/index.ts --target=bun --packages=external --outdir=dist && biome check --error-on-warnings .",
+    "typecheck": "tsc -p .",
     "lint": "biome lint --error-on-warnings .",
     "lint:fix": "biome check --write .",
     "fix:unsafe": "biome check --write --unsafe .",
@@ -47,6 +48,8 @@
     "bun": ">=1.3.14"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15"
+    "@biomejs/biome": "2.5.15",
+    "@types/bun": "1.4.3",
+    "typescript": "7.0.2"
   }
 }

@@ -9,10 +9,10 @@ import { createRuntime, findInstalledOmp } from "../src/runtime";
 import { type HostNamespace, type SessionLike, type SessionManagerLike } from "../src/types";
 
 const runtime = createRuntime({} as HostNamespace, findInstalledOmp());
-interface TestAgent extends SessionLike.agent {
+type TestAgent = SessionLike["agent"] & {
   prompt(text: string): Promise<void>;
   setSystemPrompt(prompt: string[]): void;
-}
+};
 interface MockContext {
   messages: Array<{ role: string; content: unknown }>;
   systemPrompt: string[];

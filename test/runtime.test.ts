@@ -53,16 +53,16 @@ test("accepts verified and newer same-major hosts, rejects older, next-major and
   const originalWarn = console.warn;
   console.warn = (message: unknown) => warnings.push(message);
   try {
-    for (const version of [...SUPPORTED_OMP_VERSIONS, "18.12.2", "18.99.0"]) {
+    for (const version of [...SUPPORTED_OMP_VERSIONS, "18.99.0", "18.99.0"]) {
       await manifest(version);
       expect(() => assertInstalledOmp(directory)).not.toThrow();
     }
   } finally {
     console.warn = originalWarn;
   }
-  expect(warnings.filter((warning) => String(warning).includes("18.12.2 is newer"))).toHaveLength(
-    1,
-  );
+  // Verified versions load silently; an unverified one warns once per version.
+  expect(warnings).toHaveLength(1);
+  expect(String(warnings[0])).toContain("host 18.99.0 is newer than the verified matrix");
 });
 
 test("ordinary installed CLI passes its version smoke check", async () => {
@@ -76,7 +76,11 @@ test("ordinary installed CLI passes its version smoke check", async () => {
     throw new Error(`Configured extension fixture failed: ${stderr}`);
   }
   expect(code).toBe(0);
-  expect(SUPPORTED_OMP_VERSIONS.some((version) => stdout.trim().endsWith(version))).toBe(true);
+  // findInstalledOmp rejects hosts outside the accepted range; unverified same-major hosts pass.
+  const installed = (await Bun.file(join(findInstalledOmp(), "package.json")).json()) as {
+    version: string;
+  };
+  expect(stdout.trim().endsWith(installed.version)).toBe(true);
   expect(stderr).toBe("");
 });
 
@@ -175,7 +179,7 @@ export default async function(pi) {
   } });
 }`,
   );
-  const env = {
+  const env: Record<string, string | undefined> = {
     ...process.env,
     PI_CODING_AGENT_DIR: agentDir,
     PI_CONFIG_DIR: relative(homedir(), join(directory, "configuration")),
@@ -401,7 +405,7 @@ export default function(pi) {
   }});
 }`,
   );
-  const env = {
+  const env: Record<string, string | undefined> = {
     ...process.env,
     PI_CODING_AGENT_DIR: agentDir,
     PI_CONFIG_DIR: relative(homedir(), join(directory, "configuration")),
