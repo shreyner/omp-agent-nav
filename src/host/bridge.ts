@@ -294,7 +294,7 @@ export class WorkspaceBridge {
     const grants = this.#grants(this.currentSession(ctx));
     const initial = await navigation.initialRoot();
     // A root also in the native list shows as add-dir: its AGENTS join the prompt.
-    const native = new Set(grants.trustedNative().map(([root]) => root));
+    const native = new Set(grants.native().map(([root]) => root));
     return [
       { root: initial ?? grants.initialCwd, source: "start", missing: initial === undefined },
       ...grants.roots().map((root) => ({
@@ -355,8 +355,8 @@ export class WorkspaceBridge {
   }
 
   /**
-   * A path names a root exactly; only a linked worktree outside its primary checkout names the
-   * primary. A subdirectory names nothing, so revoking it cannot take its whole repository.
+   * A path names a root exactly; only the top level of a linked worktree names its primary
+   * checkout. A subdirectory names nothing, so revoking it cannot take its whole repository.
    */
   #namedRoot(navigation: WorkspaceNavigation, lexical: string) {
     let path = lexical;
@@ -367,9 +367,7 @@ export class WorkspaceBridge {
     }
     const primary = navigation.previewProjectRoot(path);
     const worktreeOf =
-      primary !== undefined && primary !== path && !pathIsWithin(primary, path)
-        ? primary
-        : undefined;
+      primary !== path && navigation.previewCheckoutRoot(path) === path ? primary : undefined;
     return {
       path,
       matches: (root: string) => root === path || root === lexical || root === worktreeOf,
@@ -497,31 +495,61 @@ export class WorkspaceBridge {
     }
     await session.settleMemoryBackend();
     await session.sessionManager.flush();
+    const grants = this.#grants(session);
+    const restoreGrants = grants.snapshot();
     try {
       await this.#adoptNativeRoots(session, cwd);
       await session.moveSession(cwd);
       const warning = await this.#rescope(session, cwd);
+      // The host's settings watcher adds the target's configured dirs asynchronously; record them
+      // now so they never become roots, even if it adds them later or cannot remove them.
+      grants.distrustConfigured();
+      await grants.persist();
       await this.#coordinators.get(session.sessionManager)?.navigation.validateMove(cwd);
       await session.refreshBaseSystemPrompt();
       await this.notifyAfterRelocation(session);
       return warning;
     } catch (error) {
-      let warning: string | undefined;
-      try {
-        await session.sessionManager.rollbackMove(previous);
-        this.#grants(session).reload();
-        warning = await this.#rescope(session, previous.cwd);
-        await session.refreshBaseSystemPrompt();
-        await this.notifyAfterRelocation(session);
-      } catch (restoreError) {
-        throw new WorkspaceRollbackError(
-          `Workspace transition failed (${String(error)}); restoring ${previous.cwd} also failed (${String(restoreError)}). Actual cwd: ${session.sessionManager.getCwd()}. The model run was stopped.`,
-        );
+      const distrusted = grants.distrustConfigured();
+      throw await this.#restore(session, previous, restoreGrants, distrusted, error);
+    }
+  }
+
+  /**
+   * Rolls a failed move back; resolves to the error to throw. `restoreGrants` returns memory to
+   * the pre-move grants; `persistDistrust` records dirs the failed target's settings named.
+   */
+  async #restore(
+    session: SessionLike,
+    previous: ReturnType<SessionLike["sessionManager"]["captureState"]>,
+    restoreGrants: () => void,
+    persistDistrust: boolean,
+    error: unknown,
+  ): Promise<Error> {
+    let warning: string | undefined;
+    try {
+      await session.sessionManager.rollbackMove(previous);
+      // rollbackMove restored the entries written during the move; memory follows them.
+      restoreGrants();
+      if (persistDistrust) {
+        await this.#grants(session).persist();
       }
-      throw new Error(
-        `Workspace transition failed and was restored to ${previous.cwd}${warning ? ` (partially: ${warning})` : ""}: ${error instanceof Error ? error.message : String(error)}`,
+      warning = await this.#rescope(session, previous.cwd);
+      await session.refreshBaseSystemPrompt();
+      await this.notifyAfterRelocation(session);
+    } catch (restoreError) {
+      return new WorkspaceRollbackError(
+        `Workspace transition failed (${String(error)}); restoring ${previous.cwd} also failed (${String(restoreError)}). Actual cwd: ${session.sessionManager.getCwd()}. The model run was stopped.`,
       );
     }
+    return new Error(
+      `Workspace transition failed and was restored to ${previous.cwd}${warning ? ` (partially: ${warning})` : ""}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  /** Tree navigation moved the leaf; grants follow the branch's ledger entry. */
+  reloadGrantBranch(ctx: ExtensionContextLike): void {
+    this.#grants(this.currentSession(ctx)).reloadBranch();
   }
 
   /**

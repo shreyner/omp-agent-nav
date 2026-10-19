@@ -130,6 +130,11 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
       await bridge.notifyAfterRelocation(bridge.currentSession(ctx));
     }
   });
+  pi.on("session_tree", (_event, ctx) => {
+    if (ctx.agent.kind === "main") {
+      bridge.reloadGrantBranch(ctx);
+    }
+  });
   pi.on("session_shutdown", (_event, ctx) => {
     if (ctx.agent.kind === "main") {
       bridge.coordinator(ctx).dispose();

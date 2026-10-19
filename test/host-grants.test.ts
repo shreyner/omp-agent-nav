@@ -20,6 +20,8 @@ const { SessionManager } = await runtime.importModule<{
     inMemory(cwd: string): ConstructorParameters<typeof WorkspaceGrantState>[0] & {
       addWorkspaceDirectory(directory: string): Promise<string | null>;
       moveTo(cwd: string): Promise<void>;
+      newSession(options?: { additionalDirectories?: string[] }): Promise<unknown>;
+      resetLeaf(): void;
       restoreState(state: unknown): void;
     };
   };
@@ -124,6 +126,25 @@ async function relocating(
     manager
       .getBranch()
       .filter((entry) => entry.type === "custom" && entry.customType === "omp-agent-nav.workspace");
+  /**
+   * Emulates the host settings watcher on each cwd change: the old values are removed and the
+   * new ones added as raw strings, both resolved against the new cwd.
+   */
+  const watch = (valuesFor: (cwd: string) => string[]) => {
+    let current: string[] = [];
+    owner.applyCwdChange = async (cwd: string) => {
+      const next = valuesFor(cwd);
+      session.settings = configuring(next);
+      for (const value of current.filter((item) => !next.includes(item))) {
+        await manager.removeWorkspaceDirectory(value);
+      }
+      for (const value of next.filter((item) => !current.includes(item))) {
+        await manager.addWorkspaceDirectory(value).catch(() => null);
+      }
+      current = next;
+      return true;
+    };
+  };
   return {
     root,
     a,
@@ -138,6 +159,7 @@ async function relocating(
     move,
     prompts,
     ledgerEntries,
+    watch,
   };
 }
 
@@ -224,6 +246,12 @@ test("roots present when the session starts seed the ledger and survive the sett
   try {
     f.session.settings = configuring([shared.dir]);
     expect(f.coordinator.navigation.options.getWorkspaceRoots()).toEqual([shared.dir]);
+    // Seeded, yet still in the native list: its AGENTS are in the prompt, so it lists as add-dir.
+    expect(await f.bridge.listRoots(f.ctx)).toContainEqual({
+      root: shared.dir,
+      source: "add-dir",
+      missing: false,
+    });
     // Leaving A drops A's configured root natively; it stays accepted.
     f.owner.applyCwdChange = async () => {
       f.session.settings = configuring([]);
@@ -339,6 +367,12 @@ test("/nav-roots revoke names roots exactly: a subdirectory never takes its whol
     await fs.mkdir(docs);
     await f.bridge.grantWorkspaceDirs(f.ctx, [f.b]);
     await expect(f.bridge.revokeRoot(f.ctx, docs)).rejects.toThrow(`inside ${f.b}`);
+    // Inside a linked worktree too: only the worktree's top level names its primary.
+    const worktreeDocs = join(f.wt, "docs");
+    await fs.mkdir(worktreeDocs);
+    await expect(f.bridge.revokeRoot(f.ctx, worktreeDocs)).rejects.toThrow(
+      "not a granted workspace root",
+    );
     await f.manager.addWorkspaceDirectory(docs);
     expect(await f.bridge.revokeRoot(f.ctx, docs)).toEqual({ revoked: [docs], coveredBy: f.b });
     expect(f.coordinator.navigation.options.getWorkspaceRoots()).toEqual([f.b]);
@@ -377,6 +411,91 @@ test("a rolled-back first move keeps the start root even after a native /move", 
     expect(f.ledgerEntries()).toHaveLength(0);
     await f.bridge.grantWorkspaceDirs(f.ctx, [f.b]);
     expect(new WorkspaceGrantState(f.manager).initialCwd).toBe(f.a);
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
+test("a relative settings value the watcher cannot remove after the next move stays untrusted", async () => {
+  const f = await relocating("relative");
+  try {
+    const sub = join(f.b, "sub");
+    const secret = join(f.root, "secret");
+    await fs.mkdir(sub);
+    await fs.mkdir(secret);
+    await f.bridge.grantWorkspaceDirs(f.ctx, [f.b]);
+    // B's config names its parent; the watcher resolves ".." against B on entry and against
+    // B/sub on exit, so the parent is never removed from the native list.
+    f.watch((cwd) => (cwd === f.b ? [".."] : []));
+    await f.move(f.b);
+    await f.move(sub);
+    expect(f.manager.getAdditionalDirectories()).toEqual([f.root]);
+    expect(f.bridge.moveNeedsGrant(secret)).toBe(true);
+    await f.move(f.a);
+    expect(f.coordinator.navigation.options.getWorkspaceRoots()).toEqual([f.b]);
+    // The mark survives a resume through the ledger.
+    const resumed = SessionManager.inMemory(f.a);
+    resumed.restoreState(f.manager.captureState());
+    expect(new WorkspaceGrantState(resumed).trustedNative()).toEqual([]);
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
+test("/new in a moved-to project does not seed that project's settings as roots", async () => {
+  const f = await relocating("new-session");
+  try {
+    const secret = join(f.root, "secret");
+    await fs.mkdir(secret);
+    await f.bridge.grantWorkspaceDirs(f.ctx, [f.b]);
+    f.watch((cwd) => (cwd === f.b ? [f.root] : []));
+    await f.move(f.b);
+    // Native /new seeds the new session with the current settings' directories.
+    await f.manager.newSession({ additionalDirectories: [f.root] });
+    expect(f.manager.getAdditionalDirectories()).toEqual([f.root]);
+    expect(f.coordinator.navigation.options.getWorkspaceRoots()).toEqual([]);
+    expect(f.bridge.moveNeedsGrant(secret)).toBe(true);
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
+test("a rolled-back move does not turn a live /add-dir root into a grant", async () => {
+  const f = await relocating("rollback-reseed");
+  try {
+    await f.manager.addWorkspaceDirectory(f.b);
+    // The move adopts B into the ledger first; its rollback must undo that in memory too.
+    f.owner.applyCwdChange = async (cwd) => cwd !== f.b;
+    await f.move(f.b);
+    expect(f.manager.getCwd()).toBe(f.a);
+    // /remove-dir still withdraws the user's own native root.
+    await f.manager.removeWorkspaceDirectory(f.b);
+    expect(f.coordinator.navigation.options.getWorkspaceRoots()).toEqual([]);
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
+test("tree navigation to a point before a grant drops that grant", async () => {
+  const f = await relocating("tree");
+  try {
+    await f.bridge.grantWorkspaceDirs(f.ctx, [f.b]);
+    expect(f.bridge.moveNeedsGrant(f.b)).toBe(false);
+    f.manager.resetLeaf();
+    f.bridge.reloadGrantBranch(f.ctx);
+    expect(f.coordinator.navigation.options.getWorkspaceRoots()).toEqual([]);
+    expect(f.bridge.moveNeedsGrant(f.b)).toBe(true);
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
+test("a settings value of ~ excludes the home directory like the host resolves it", async () => {
+  const f = await relocating("tilde");
+  try {
+    f.session.settings = configuring(["~"]);
+    await f.manager.addWorkspaceDirectory("~");
+    expect(f.coordinator.navigation.options.getWorkspaceRoots()).toEqual([]);
   } finally {
     f.coordinator.dispose();
   }

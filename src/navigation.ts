@@ -221,6 +221,16 @@ export class WorkspaceNavigation {
     return await this.#initialRoot.catch(() => undefined);
   }
 
+  /** Sync best effort: the checkout root (a worktree's own top level) containing `directory`. */
+  previewCheckoutRoot(directory: string): string | undefined {
+    try {
+      const root = this.#vcsValue?.git(realpathSync(directory))?.info().repoRoot;
+      return root ? realpathSync(root) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Sync best effort for approval prompts: realpath, a worktree resolves to its primary checkout. */
   previewProjectRoot(directory: string): string | undefined {
     let canonical: string;
