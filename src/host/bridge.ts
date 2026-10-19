@@ -449,12 +449,22 @@ export class WorkspaceBridge {
     );
   }
 
-  /** Writes roots a session change carried over; `reason` comes from the host's event. */
+  /**
+   * Writes roots a session change carried over; `reason` comes from the host's event. Leaves the
+   * main session with a coordinator whose navigation starts at the settled start root.
+   */
   async settleGrants(ctx: ExtensionContextLike, reason?: "new" | "resume" | "fork"): Promise<void> {
-    const grants = this.#grants(this.currentSession(ctx));
+    const session = this.currentSession(ctx);
+    const grants = this.#grants(session);
     if (reason) {
+      const start = grants.initialCwd;
       grants.switched(reason);
+      if (grants.initialCwd !== start) {
+        // The navigation captured the copied start root; the carried-over one needs a new one.
+        this.#coordinators.get(session.sessionManager)?.dispose();
+      }
     }
+    this.coordinator(ctx);
     await grants.settle();
   }
 

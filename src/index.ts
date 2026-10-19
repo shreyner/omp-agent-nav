@@ -104,7 +104,6 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
   registerWorkspaceGrantTool(pi, bridge, Type);
   pi.on("session_start", async (_event, ctx) => {
     if (ctx.agent.kind === "main") {
-      bridge.coordinator(ctx);
       await bridge.settleGrants(ctx);
       await memory.ensure(bridge.currentSession(ctx));
     } else {
@@ -126,14 +125,14 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
   });
   pi.on("session_switch", async (event, ctx) => {
     if (ctx.agent.kind === "main") {
-      bridge.coordinator(ctx);
       await bridge.settleGrants(ctx, event.reason as "new" | "resume" | "fork");
       await memory.ensure(bridge.currentSession(ctx));
       await bridge.notifyAfterRelocation(bridge.currentSession(ctx));
     }
   });
-  pi.on("session_branch", async (event, ctx) => {
-    if (ctx.agent.kind === "main" && (event.reason === "fork" || event.reason === "branch")) {
+  // /branch, a fork from an entry and a promoted /btw all copy a path into a new session.
+  pi.on("session_branch", async (_event, ctx) => {
+    if (ctx.agent.kind === "main") {
       await bridge.settleGrants(ctx, "fork");
     }
   });

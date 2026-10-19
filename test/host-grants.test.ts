@@ -415,6 +415,34 @@ test("/new and fork inherit the current roots and record them; a fork cannot bri
   }
 });
 
+test("a fork after a move starts at the current project, even when a coordinator was built first", async () => {
+  const f = await relocating("fork-moved");
+  try {
+    const sub = join(f.b, "sub");
+    await fs.mkdir(sub);
+    await f.bridge.grantWorkspaceDirs(f.ctx, [f.b]);
+    await f.move(f.b);
+    // By the next tool call the navigation has long resolved its start root A.
+    await f.coordinator.navigation.initialRoot();
+    const moved = f.manager.getLeafId()!;
+    // /branch, an entry fork or a promoted /btw: only session_branch runs before the next tool.
+    f.manager.createBranchedSession(moved);
+    await f.bridge.settleGrants(f.ctx, "fork");
+    expect(f.roots()).toEqual([f.a]);
+    expect(f.bridge.moveNeedsGrant(sub)).toBe(false);
+    // Whole /fork: a handler may build the coordinator from the copied entry before the carry.
+    f.manager.createBranchedSession(moved);
+    const early = f.bridge.coordinator(f.ctx);
+    await early.navigation.initialRoot();
+    await f.bridge.settleGrants(f.ctx, "fork");
+    expect(f.roots()).toEqual([f.a]);
+    expect(f.bridge.moveNeedsGrant(sub)).toBe(false);
+    await f.bridge.coordinator(f.ctx).navigation.validateMove(sub);
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
 test("--add-dir on resuming a session with a ledger is recorded, so switching back keeps it", async () => {
   const f = await relocating("resume-add-dir");
   try {
