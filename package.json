@@ -2,6 +2,22 @@
   "name": "omp-agent-nav",
   "version": "0.2.0",
   "private": true,
+  "description": "oh-my-pi (omp) extension: move an agent session between projects and git worktrees, and run subagents in another project via task.cwd.",
+  "keywords": [
+    "omp",
+    "oh-my-pi",
+    "extension",
+    "worktree",
+    "agent"
+  ],
+  "homepage": "https://github.com/shreyner/omp-agent-nav#readme",
+  "bugs": "https://github.com/shreyner/omp-agent-nav/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shreyner/omp-agent-nav.git"
+  },
+  "license": "MIT",
+  "author": "Aleksandr Shreyner",
   "type": "module",
   "main": "./src/index.ts",
   "omp": {
@@ -11,7 +27,7 @@
   },
   "scripts": {
     "test": "bun test ./test",
-    "check": "bun build ./src/index.ts --target=bun --packages=external --outdir=/private/tmp/omp-agent-nav-build && biome check --error-on-warnings .",
+    "check": "bun build ./src/index.ts --target=bun --packages=external --outdir=dist && biome check --error-on-warnings .",
     "lint": "biome lint --error-on-warnings .",
     "lint:fix": "biome check --write .",
     "fix:unsafe": "biome check --write --unsafe .",

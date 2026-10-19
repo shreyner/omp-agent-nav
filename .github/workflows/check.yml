@@ -1,0 +1,19 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      # Bundle with external packages + Biome gate. The test suite needs an installed omp,
+      # git, Go + gopls and python3, so it runs locally (`bun run test`, `bun run matrix`).
+      - run: bun run check
