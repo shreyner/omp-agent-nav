@@ -12,6 +12,7 @@ const runtime = createRuntime({} as HostNamespace, findInstalledOmp());
 type TestAgent = SessionLike["agent"] & {
   prompt(text: string): Promise<void>;
   setSystemPrompt(prompt: string[]): void;
+  state: { messages: unknown[] };
 };
 interface MockContext {
   messages: Array<{ role: string; content: unknown }>;

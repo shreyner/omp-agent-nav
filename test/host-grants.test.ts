@@ -4,9 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { WorkspaceBridge, WorkspaceGrantState } from "../src/host";
+import { registerCommands } from "../src/index";
 import { NavigationError } from "../src/navigation";
 import { createRuntime, findInstalledOmp } from "../src/runtime";
-import { type ExtensionContextLike, type HostNamespace, type SessionLike } from "../src/types";
+import {
+  type ExtensionApiLike,
+  type ExtensionContextLike,
+  type HostNamespace,
+  type SessionLike,
+} from "../src/types";
 
 const runtime = createRuntime({} as HostNamespace, findInstalledOmp());
 const { SessionManager } = await runtime.importModule<{
@@ -20,7 +26,7 @@ const { SessionManager } = await runtime.importModule<{
 }>("session/session-manager.ts");
 const { Settings } = await runtime.importModule<{
   Settings: {
-    isolated(): { flush(): Promise<void> };
+    isolated(values?: Record<string, unknown>): SessionLike["settings"];
     loadReadOnly(options: Record<string, unknown>): Promise<SessionLike["settings"]>;
   };
 }>("config/settings.ts");
@@ -53,8 +59,14 @@ async function commit(cwd: string): Promise<void> {
   );
 }
 
-/** A main session that relocates through the real native moveTo, like the TUI owner path. */
-async function relocating(name: string) {
+/**
+ * A main session that relocates through the real native moveTo, like the TUI owner path.
+ * `start` runs before the coordinator exists, i.e. while omp sets up the session.
+ */
+async function relocating(
+  name: string,
+  start?: (f: { root: string; manager: ReturnType<typeof SessionManager.inMemory> }) => unknown,
+) {
   const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), `omp-nav-${name}-`)));
   temporary.push(root);
   const a = join(root, "A");
@@ -88,6 +100,8 @@ async function relocating(name: string) {
     AgentRegistry: { global: () => ({ get: () => refs[0], list: () => refs }) },
   } as unknown as HostNamespace;
   const bridge = new WorkspaceBridge({ ...runtime, host });
+  await bridge.loadSettingRegistry();
+  await start?.({ root, manager });
   const owner = {
     sessionManager: manager,
     applyCwdChange: async (_cwd: string) => true,
@@ -110,7 +124,26 @@ async function relocating(name: string) {
     manager
       .getBranch()
       .filter((entry) => entry.type === "custom" && entry.customType === "omp-agent-nav.workspace");
-  return { root, a, b, wt, manager, bridge, owner, ctx, coordinator, move, prompts, ledgerEntries };
+  return {
+    root,
+    a,
+    b,
+    wt,
+    manager,
+    session,
+    bridge,
+    owner,
+    ctx,
+    coordinator,
+    move,
+    prompts,
+    ledgerEntries,
+  };
+}
+
+/** Settings whose `workspace.additionalDirectories` lists `dirs`, as a project config would. */
+function configuring(dirs: string[]): SessionLike["settings"] {
+  return Settings.isolated({ "workspace.additionalDirectories": dirs });
 }
 
 test("an --add-dir root moves into the ledger before native moveTo drops it, and stays out of grants' AGENTS path", async () => {
@@ -136,14 +169,70 @@ test("an --add-dir root moves into the ledger before native moveTo drops it, and
   }
 });
 
-test("a move outside any native root keeps the start root across resume", async () => {
+test("the first move records the start root, so a resume elsewhere keeps it", async () => {
   const f = await relocating("initial");
   try {
-    await f.bridge.grantWorkspaceDirs(f.ctx, [f.b]);
-    await f.move(f.b);
-    const resumed = SessionManager.inMemory(f.b);
+    const sub = join(f.a, "sub");
+    await fs.mkdir(sub);
+    expect(f.ledgerEntries()).toHaveLength(0);
+    // No grant and no native root: only the move itself can record the start root.
+    await f.move(sub);
+    expect(f.ledgerEntries()).toHaveLength(1);
+    const resumed = SessionManager.inMemory(sub);
     resumed.restoreState(f.manager.captureState());
     expect(new WorkspaceGrantState(resumed).initialCwd).toBe(f.a);
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
+test("roots a move target's project settings configure are not accepted and not adopted", async () => {
+  const f = await relocating("configured");
+  try {
+    const clone = join(f.b, "clone");
+    const secret = join(f.root, "secret");
+    await fs.mkdir(clone);
+    await fs.mkdir(secret);
+    await f.bridge.grantWorkspaceDirs(f.ctx, [f.b]);
+    // Entering clone reloads its settings; the host watcher adds the configured root natively.
+    f.owner.applyCwdChange = async (cwd) => {
+      if (cwd === clone) {
+        f.session.settings = configuring([f.root]);
+        await f.manager.addWorkspaceDirectory(f.root);
+      }
+      return true;
+    };
+    await f.move(clone);
+    expect(f.manager.getAdditionalDirectories()).toEqual([f.root]);
+    expect(f.bridge.moveNeedsGrant(secret)).toBe(true);
+    await expect(f.coordinator.navigation.validateMove(secret)).rejects.toThrow("permission");
+    await f.move(f.b);
+    expect(f.coordinator.navigation.options.getWorkspaceRoots()).toEqual([f.b]);
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
+test("roots present when the session starts seed the ledger and survive the settings watcher", async () => {
+  const shared = { dir: "" };
+  const f = await relocating("seeded", async ({ root, manager }) => {
+    shared.dir = join(root, "shared");
+    await fs.mkdir(shared.dir);
+    // omp merges the start project's workspace.additionalDirectories before the extension starts.
+    await manager.addWorkspaceDirectory(shared.dir);
+  });
+  try {
+    f.session.settings = configuring([shared.dir]);
+    expect(f.coordinator.navigation.options.getWorkspaceRoots()).toEqual([shared.dir]);
+    // Leaving A drops A's configured root natively; it stays accepted.
+    f.owner.applyCwdChange = async () => {
+      f.session.settings = configuring([]);
+      await f.manager.removeWorkspaceDirectory(shared.dir);
+      return true;
+    };
+    await f.bridge.grantWorkspaceDirs(f.ctx, [f.b]);
+    await f.move(f.b);
+    expect(f.coordinator.navigation.options.getWorkspaceRoots()).toEqual([shared.dir, f.b]);
   } finally {
     f.coordinator.dispose();
   }
@@ -218,12 +307,13 @@ test("/nav-roots revoke removes a grant from the ledger and the native list, wit
     await f.move(f.a);
     // An old session also kept the grant in the native list: revoke clears both.
     await f.manager.addWorkspaceDirectory(f.b);
+    f.prompts.refreshed = 0;
     expect(await f.bridge.revokeRoot(f.ctx, f.wt)).toEqual({
       revoked: [f.b],
       coveredBy: undefined,
     });
     expect(f.manager.getAdditionalDirectories()).toEqual([]);
-    expect(f.prompts.refreshed).toBeGreaterThan(0);
+    expect(f.prompts.refreshed).toBe(1);
     await expect(f.coordinator.navigation.validateMove(f.wt)).rejects.toThrow("permission");
     await expect(f.coordinator.navigation.validateMove(f.b)).rejects.toThrow("permission");
     // A vanished grant is still revocable by its path.
@@ -237,6 +327,96 @@ test("/nav-roots revoke removes a grant from the ledger and the native list, wit
       missing: true,
     });
     expect((await f.bridge.revokeRoot(f.ctx, gone)).revoked).toEqual([gone]);
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
+test("/nav-roots revoke names roots exactly: a subdirectory never takes its whole repository", async () => {
+  const f = await relocating("revoke-exact");
+  try {
+    const docs = join(f.b, "docs");
+    await fs.mkdir(docs);
+    await f.bridge.grantWorkspaceDirs(f.ctx, [f.b]);
+    await expect(f.bridge.revokeRoot(f.ctx, docs)).rejects.toThrow(`inside ${f.b}`);
+    await f.manager.addWorkspaceDirectory(docs);
+    expect(await f.bridge.revokeRoot(f.ctx, docs)).toEqual({ revoked: [docs], coveredBy: f.b });
+    expect(f.coordinator.navigation.options.getWorkspaceRoots()).toEqual([f.b]);
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
+test("a session already outside every root may still revoke, and a failed move keeps the start root", async () => {
+  const f = await relocating("outside");
+  try {
+    const x = join(f.root, "X");
+    await fs.mkdir(x);
+    // Native /move bypasses the extension and leaves the session outside every root.
+    await f.manager.moveTo(x);
+    await f.bridge.grantWorkspaceDirs(f.ctx, [f.b]);
+    expect((await f.bridge.revokeRoot(f.ctx, f.b)).revoked).toEqual([f.b]);
+    // Grants and revokes so far wrote the ledger with the real start root.
+    expect(new WorkspaceGrantState(f.manager).initialCwd).toBe(f.a);
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
+test("a rolled-back first move keeps the start root even after a native /move", async () => {
+  const f = await relocating("reload");
+  try {
+    const x = join(f.root, "X");
+    const sub = join(f.a, "sub");
+    await fs.mkdir(x);
+    await fs.mkdir(sub);
+    await f.manager.moveTo(x);
+    f.owner.applyCwdChange = async (cwd) => cwd !== sub;
+    await f.move(sub);
+    expect(f.manager.getCwd()).toBe(x);
+    expect(f.ledgerEntries()).toHaveLength(0);
+    await f.bridge.grantWorkspaceDirs(f.ctx, [f.b]);
+    expect(new WorkspaceGrantState(f.manager).initialCwd).toBe(f.a);
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
+test("/nav-roots and /nav-move commands: idle gate, usage, listing, revoke and a failed move", async () => {
+  const f = await relocating("commands");
+  try {
+    interface Command {
+      handler(args: string, ctx: ExtensionContextLike): Promise<void>;
+    }
+    const commands = new Map<string, Command>();
+    registerCommands(
+      {
+        registerCommand: (name: string, command: Command) => commands.set(name, command),
+      } as unknown as ExtensionApiLike,
+      f.bridge,
+    );
+    const notices: string[] = [];
+    let idle = true;
+    const ctx = {
+      ...f.ctx,
+      isIdle: () => idle,
+      ui: { notify: (message: string) => notices.push(message) },
+    } as unknown as ExtensionContextLike;
+    const run = (name: string, args: string) => commands.get(name)!.handler(args, ctx);
+    await f.bridge.grantWorkspaceDirs(f.ctx, [f.b]);
+    await run("nav-roots", "");
+    expect(notices.pop()).toBe(`start: ${f.a}\ngrant: ${f.b}`);
+    await expect(run("nav-roots", "drop B")).rejects.toThrow("Usage");
+    idle = false;
+    await expect(run("nav-roots", `revoke ${f.b}`)).rejects.toThrow(
+      "Wait for the current response",
+    );
+    await expect(run("nav-move", f.b)).rejects.toThrow("Wait for the current response");
+    idle = true;
+    f.owner.applyCwdChange = async (cwd) => cwd !== f.wt;
+    await expect(run("nav-move", f.wt)).rejects.toThrow("Workspace transition failed");
+    await run("nav-roots", `revoke ${f.b}`);
+    expect(notices.pop()).toBe(`Revoked ${f.b}.`);
   } finally {
     f.coordinator.dispose();
   }

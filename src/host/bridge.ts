@@ -30,7 +30,8 @@ export interface WorkspaceRoot {
 }
 
 // omp re-imports the extension graph (`?mtime=`) for every subagent session, so module-local
-// state cannot see an earlier install. The process-wide key lives on the patched host prototype.
+// state cannot see an earlier install. The process-wide key lives on a host prototype that all
+// graphs share.
 const HOST_BRIDGE = Symbol.for("omp-agent-nav.host-bridge");
 
 export class WorkspaceBridge {
@@ -44,6 +45,7 @@ export class WorkspaceBridge {
   /** Grant roots shown in approval dialogs, by requested dir, per main session manager. */
   #approvedRoots = new WeakMap<object, Map<string, string>>();
   #workspaceApplying = new WeakSet<object>();
+  #settingRegistry?: { lookup(id: string): { get(settings: unknown): unknown } | undefined };
   #activeMain?: {
     sessionManager: SessionLike["sessionManager"];
     session: SessionLike;
@@ -53,6 +55,22 @@ export class WorkspaceBridge {
 
   constructor(runtime: RuntimeModules) {
     this.runtime = runtime;
+  }
+
+  /** Root checks run synchronously (approval), so the settings registry is loaded up front. */
+  async loadSettingRegistry(): Promise<void> {
+    await this.runtime.importModule("config/all-settings.ts");
+    this.#settingRegistry = await this.runtime.importModule("config/registry.ts");
+  }
+
+  /** `workspace.additionalDirectories` of the current settings, as configured. */
+  #configuredRoots(session: SessionLike): string[] {
+    const value = this.#settingRegistry
+      ?.lookup("workspace.additionalDirectories")
+      ?.get(session.settings);
+    return Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [];
   }
 
   setMemoryBridge(memory: MemoryBridgeLike): void {
@@ -156,7 +174,9 @@ export class WorkspaceBridge {
   #grants(session: SessionLike): WorkspaceGrantState {
     let grants = this.#grantStates.get(session.sessionManager);
     if (!grants) {
-      grants = new WorkspaceGrantState(session.sessionManager as GrantManager);
+      grants = new WorkspaceGrantState(session.sessionManager as GrantManager, () =>
+        this.#configuredRoots(session),
+      );
       this.#grantStates.set(session.sessionManager, grants);
     }
     return grants;
@@ -273,14 +293,15 @@ export class WorkspaceBridge {
     const navigation = this.coordinator(ctx).navigation;
     const grants = this.#grants(this.currentSession(ctx));
     const initial = await navigation.initialRoot();
-    const ledger = grants.ledger();
+    // A root also in the native list shows as add-dir: its AGENTS join the prompt.
+    const native = new Set(grants.trustedNative().map(([root]) => root));
     return [
       { root: initial ?? grants.initialCwd, source: "start", missing: initial === undefined },
-      ...ledger.map((root) => ({ root, source: "grant" as const, missing: !existsSync(root) })),
-      ...grants
-        .native()
-        .filter(([root]) => !ledger.includes(root))
-        .map(([root]) => ({ root, source: "add-dir" as const, missing: !existsSync(root) })),
+      ...grants.roots().map((root) => ({
+        root,
+        source: native.has(root) ? ("add-dir" as const) : ("grant" as const),
+        missing: !existsSync(root),
+      })),
     ];
   }
 
@@ -312,11 +333,11 @@ export class WorkspaceBridge {
           : `${dir} is not a granted workspace root${coveredBy ? `; it is inside ${coveredBy}` : ""}.`,
       );
     }
+    // Refuse only when the revoke itself would leave the session's cwd outside every root.
     const here = this.#namedRoot(navigation, session.sessionManager.getCwd());
-    if (!remaining.some((root) => pathIsWithin(root, here.path) || here.within(root))) {
-      throw new Error(
-        `The session is inside ${revoked.join(", ")}; move out of it before revoking it.`,
-      );
+    const holding = revoked.find(here.covered);
+    if (holding !== undefined && !remaining.some(here.covered)) {
+      throw new Error(`The session is inside ${holding}; move out of it before revoking it.`);
     }
     for (const root of ledger) {
       grants.revoke(root);
@@ -333,7 +354,10 @@ export class WorkspaceBridge {
     return { revoked, coveredBy };
   }
 
-  /** A path and its primary checkout, for matching roots that may since have vanished. */
+  /**
+   * A path names a root exactly; only a linked worktree outside its primary checkout names the
+   * primary. A subdirectory names nothing, so revoking it cannot take its whole repository.
+   */
   #namedRoot(navigation: WorkspaceNavigation, lexical: string) {
     let path = lexical;
     try {
@@ -342,10 +366,16 @@ export class WorkspaceBridge {
       // A vanished directory still matches its ledger entry lexically.
     }
     const primary = navigation.previewProjectRoot(path);
+    const worktreeOf =
+      primary !== undefined && primary !== path && !pathIsWithin(primary, path)
+        ? primary
+        : undefined;
     return {
       path,
-      matches: (root: string) => root === path || root === lexical || root === primary,
-      within: (root: string) => primary !== undefined && pathIsWithin(root, primary),
+      matches: (root: string) => root === path || root === lexical || root === worktreeOf,
+      /** Whether `root` authorizes this path, directly or through its primary checkout. */
+      covered: (root: string) =>
+        pathIsWithin(root, path) || (primary !== undefined && pathIsWithin(root, primary)),
     };
   }
 
@@ -451,7 +481,7 @@ export class WorkspaceBridge {
     const primary = this.#coordinators
       .get(session.sessionManager)
       ?.navigation.previewProjectRoot(cwd);
-    for (const [root] of grants.native()) {
+    for (const [root] of grants.trustedNative()) {
       if (pathIsWithin(root, cwd) || (primary !== undefined && pathIsWithin(root, primary))) {
         grants.add(root);
       }
@@ -562,6 +592,7 @@ async function createHostBridge(runtime: RuntimeModules): Promise<WorkspaceBridg
     );
   }
   const bridge = new WorkspaceBridge(runtime);
+  await bridge.loadSettingRegistry();
   const sessions = await runtime.importModule<{
     AgentSession: {
       prototype: SessionLike & {

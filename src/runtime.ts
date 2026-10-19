@@ -172,7 +172,6 @@ export function createRuntime(host: HostNamespace, sourceTestRoot?: string): Run
   return {
     packageRoot,
     host,
-    mode: sourceTestRoot ? "source-test" : "host",
     async importModule<T>(specifier: string): Promise<T> {
       if (sourceTestRoot) {
         return await libraryImport<T>(specifier);

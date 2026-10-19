@@ -57,7 +57,7 @@ Bundled subprocess fixtures ниже используют обычный уст�
 | Команда / способ | Фактический результат | Граница |
 |---|---|---|
 | `bun test ./test` | **69 pass, 0 fail, 801 expect() calls, 12 файлов, 49.39 s** | Итоговый прогон 2026-10-15 (NAV-08 + NAV-09 + миграция на живой omp 18.11.0): обычные bundled config/print/TUI/RPC/task/memory процессы и отдельный source-test harness. Инъектируемый `mcpStartupWait` ускорил unready-MCP кейс (подмена бюджета в тесте вместо реального ожидания). |
-| `bun test ./test/runtime.test.ts` | 5 pass, 74 assertions | Конфигурационная загрузка файла/каталога, exact version, print A/B/A с SID/storage, task B, SYSTEM literal/default/template/CLI append, штатный и точный worktree cycle. |
+| `bun test ./test/runtime.test.ts` | 5 pass, 74 assertions (прогон 2026-10-15) | Конфигурационная загрузка файла/каталога, exact version, print A/B/A с SID/storage, task B, штатный и точный worktree cycle. Проверки SYSTEM literal/default/template/CLI append удалены 2026-10-19 вместе с клоном; вместо них — граница SYSTEM.md (после A → B действует SYSTEM.md A) и сверка hosted-модулей с реестром bundle. |
 | `bun test ./test/integration-modes.test.ts` | 2 pass, 158 assertions | Обычный bundled TUI/RPC, активная BTW, контекст/skills/commands/settings A/B/A, mixed batch, gopls/workspace checker и цикл worktree. |
 | `bun test ./test/bundled-task.test.ts` | 1 pass, 127 assertions | Task вызывается моделью: single B, batch A/B/worktree B, target MCP/settings/skills/model/память до запроса, живой B после main C и native park/revive. |
 | `bun test ./test/task.test.ts` | 24 pass, 214 assertions, 5.49 s | Явный source-test runtime: native executor/schema/isolation, task/MCP ошибки, журнал/session switch, concurrency и вложенные задачи; бюджет MCP-startup подменяется на 10 мс в unready-кейсе, ожидание pid-файла и смерти процесса поллингом. |
@@ -105,7 +105,7 @@ V01–V16 ниже описывают контракт и покрытие. Гд
 
 **NAV-01, NAV-04.** [runtime.test.ts](../test/runtime.test.ts), [integration-modes.test.ts](../test/integration-modes.test.ts).
 Print проверяет неизменный SID, перенос/возврат JSONL и AGENTS цели. С 2026-10-19 он же закрепляет границу SYSTEM.md: после A → B действует SYSTEM.md стартового A, а SYSTEM.md цели B не подхватывается. TUI/RPC дополнительно проверяют settings, skills, файловые команды и заголовки сохранённой сессии.
-TUI/RPC подтвердили отсутствие AGENTS чужого разрешённого проекта при A → B → A. Заголовок сохранённой сессии содержит прежний SID и вернувшийся cwd; доступ к B сохранён отдельно.
+TUI/RPC подтвердили отсутствие AGENTS чужого разрешённого проекта при A → B → A. С 2026-10-19 B в этих прогонах разрешён через `--add-dir` и после перехода хранится в ledger; доступ через `workspace_grant` проверяют source-тесты [V20](#v20). Заголовок сохранённой сессии содержит прежний SID и вернувшийся cwd; доступ к B сохранён отдельно.
 Для Go `diagnostics file:"*"` использует штатный workspace checker (`go build ./...`), а `*.go` — настоящий gopls. Обе проверки различили ошибочную WT-ветку и корректный primary; после exit gopls снова работал в primary.
 До 2026-10-19 print также проходил A default → B text override → A default → B template для клона рендерера; эти проверки удалены вместе с клоном.
 
@@ -272,8 +272,21 @@ Approve выполняет вызов: grantWorkspaceDirs выдаёт гран�
 - Корень, добавленный через symlink-alias: approval без диалога, `workspace_grant` даёт skipped, revoke удаляет строку alias и пересобирает prompt.
 - `/nav-roots revoke`: отказ для стартового проекта, неизвестного пути (с указанием покрывающего корня) и для корня, без которого текущий worktree остался бы вне корней. Путь worktree отзывает primary сразу из ledger и штатного списка, после чего навигация в B и его worktree получает permission-отказ. Исчезнувший грант виден как `missing` и отзывается по пути.
 - `workspace_grant` и подтверждённый `session_move` пишут только в ledger, штатный список остаётся пустым.
+- После ревью (2026-10-19, Opus xhigh с верификацией):
+  - корень, который settings watcher добавил из настроек проекта цели во время переезда, навигацию не разрешает (approval спрашивает, validateMove отказывает) и в ledger не переносится;
+  - корень, засеянный при старте из штатного списка, переживает его удаление watcher'ом;
+  - первый переезд без грантов записывает начальный корень, и после resume в подкаталоге стартовым остаётся A;
+  - revoke подкаталога отказывает с «inside B», revoke корня-подкаталога из `--add-dir` не снимает грант репозитория;
+  - revoke разрешён, когда cwd уже вне корней;
+  - откат первого переезда после штатного `/move` не подменяет начальный корень;
+  - обработчики `/nav-roots` и `/nav-move`: idle-гейт, Usage, формат списка, revoke и ошибка неудачного переезда.
+
+  Каждый из этих пяти исправлений по отдельности ловится мутацией во временной копии.
 - Print-прогон (`--add-dir B`): AGENTS B входят в prompt A до перехода и отсутствуют после A → B → A.
-Граница доказательства: штатные `/move`, `/wt` и settings-наблюдатель вживую не прогонялись. `/nav-roots` в TUI и RPC вживую не проверялся, его логика покрыта через `bridge.listRoots`/`revokeRoot`.
+Граница доказательства:
+- штатные `/move`, `/wt` и настоящий settings-наблюдатель вживую не прогонялись: тесты имитируют их штатными методами SessionManager и подменой настроек;
+- `/nav-roots` в TUI и RPC вживую не проверялся, обработчики проверены с фейковыми `ctx.isIdle` и `ctx.ui.notify`;
+- ветка warning у `/nav-move` (частичный MCP) отдельно не тестирована.
 
 <a id="v19"></a>
 ### V19. Матрица версий omp

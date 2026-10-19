@@ -88,6 +88,9 @@ memory backend.
 
 - Workspace roots guard navigation and `task.cwd` only. They are **not** a sandbox: omp file and
   shell tools are not restricted by them.
+- Directories that a project's `workspace.additionalDirectories` setting adds after a move are not
+  navigation roots (the target project could otherwise grant itself anything); roots present at
+  startup, `--add-dir` and `/add-dir` are.
 - After a move, the main session keeps the JS/TS extensions and custom tools it loaded at startup;
   extensions of the target project are not loaded. New subagents load the target's extensions.
 - `SYSTEM.md` / `SYSTEM_TEMPLATE.md` overrides are resolved once when omp starts; after a move the

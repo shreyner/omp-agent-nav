@@ -135,6 +135,15 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
       bridge.coordinator(ctx).dispose();
     }
   });
+  registerCommands(pi, bridge);
+}
+
+/** Command output; a no-op in print/json modes, as for every extension command. */
+function commandUi(ctx: ExtensionContextLike) {
+  return ctx.ui as { notify(message: string, type?: "info" | "warning" | "error"): void };
+}
+
+export function registerCommands(pi: ExtensionApiLike, bridge: WorkspaceBridge): void {
   pi.registerCommand("nav-move", {
     description: "Move this idle main session into an allowed project directory.",
     handler: async (args, ctx) => {
@@ -153,15 +162,6 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
       }
     },
   });
-  registerRootsCommand(pi, bridge);
-}
-
-/** Command output; a no-op in print/json modes, as for every extension command. */
-function commandUi(ctx: ExtensionContextLike) {
-  return ctx.ui as { notify(message: string, type?: "info" | "warning" | "error"): void };
-}
-
-export function registerRootsCommand(pi: ExtensionApiLike, bridge: WorkspaceBridge): void {
   pi.registerCommand("nav-roots", {
     description: "List workspace roots, or revoke a granted one: /nav-roots revoke <dir>.",
     handler: async (args, ctx) => {

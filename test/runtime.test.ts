@@ -28,7 +28,6 @@ test("discovers the installed npm package and imports its native/source modules 
   const vcs = await runtime.importModule<{ git: unknown }>("@oh-my-pi/pi-natives/vcs");
   expect(typeof registry.AgentRegistry.global).toBe("function");
   expect(typeof vcs.git).toBe("function");
-  expect(runtime.mode).toBe("source-test");
 });
 
 // A hosted specifier missing from the bundle's module registry does not fail: the shim falls back

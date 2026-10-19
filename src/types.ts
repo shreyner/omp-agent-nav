@@ -60,11 +60,10 @@ export interface SessionLike {
       hook: (signal: AbortSignal | undefined, context: ModelCallContext) => Promise<void>,
     ): () => void;
     appendMessage(message: unknown): void;
-    state: { tools: unknown[]; messages: unknown[] };
   };
   isCompacting: boolean;
   moveSession(cwd: string): Promise<void>;
-  refreshBaseSystemPrompt(commitIf?: () => boolean): Promise<void>;
+  refreshBaseSystemPrompt(): Promise<void>;
   refreshSkillsAndCommands(): Promise<void>;
   sessionId: string;
   sessionManager: SessionManagerLike;
@@ -109,7 +108,6 @@ export interface RuntimeModules {
   host: HostNamespace;
   importLibraryModule<T>(specifier: string): Promise<T>;
   importModule<T>(specifier: string): Promise<T>;
-  mode: "host" | "source-test";
   packageRoot: string;
 }
 
