@@ -44,9 +44,9 @@ process.stdout.write("ok");
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
   ]);
-  expect(stderr.replace(/^omp-agent-nav: host \S+ is newer than the verified matrix.*\n/m, "")).toBe(
-    "",
-  );
+  expect(
+    stderr.replace(/^omp-agent-nav: host \S+ is newer than the verified matrix.*\n/m, ""),
+  ).toBe("");
   expect(code).toBe(0);
   expect(stdout).toBe("ok");
 }, 30000);
