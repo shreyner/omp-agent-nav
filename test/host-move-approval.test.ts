@@ -355,6 +355,24 @@ test("workspace_grant grants only the roots its dialog showed", async () => {
   }
 });
 
+test("workspace_grant refuses a path that had no root in its dialog; duplicates stay bound", async () => {
+  const f = await fixture();
+  f.capture();
+  try {
+    // The path does not exist while the dialog renders, then appears pointing at C.
+    const later = join(f.root, "later");
+    const appear = async () => {
+      await fs.symlink(f.c, later);
+    };
+    await expect(f.grant([later], appear)).rejects.toThrow("showed no grant root");
+    expect(f.coordinator.navigation.options.getWorkspaceRoots()).toEqual([]);
+    const granted = (await f.grant([later, later])) as { details: { granted: string[] } };
+    expect(granted.details.granted).toEqual([f.c]);
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
 test("`~` resolves to the home directory in the dialog and in the grant", async () => {
   const f = await fixture();
   f.capture();

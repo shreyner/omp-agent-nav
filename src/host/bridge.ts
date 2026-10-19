@@ -663,6 +663,8 @@ export class WorkspaceBridge {
       root = this.grantPreview(dir);
       if (root) {
         this.#approvals()?.set(dir, root);
+      } else {
+        this.#approvals()?.delete(dir);
       }
     }
     return root && root !== dir ? `dir: ${dir} → grant: ${root}` : `dir: ${dir}`;

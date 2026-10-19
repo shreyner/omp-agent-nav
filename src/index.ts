@@ -200,10 +200,19 @@ export function registerWorkspaceGrantTool(
       signal?.throwIfAborted();
       bridge.coordinator(ctx).assertDirectToolCall(id);
       const dirs = params.dirs as string[];
+      // This tool always shows a dialog, so every dir must carry the root it showed. A path that
+      // did not exist then showed none, and whatever it resolves to now was never approved.
+      const shown = new Map([...new Set(dirs)].map((dir) => [dir, bridge.takeApprovedRoot(dir)]));
+      const unbound = dirs.find((dir) => shown.get(dir) === undefined);
+      if (unbound !== undefined) {
+        throw new Error(
+          `${unbound} showed no grant root in the approval dialog; nothing was granted. Retry once the directory exists.`,
+        );
+      }
       const result = await bridge.grantWorkspaceDirs(
         ctx,
         dirs,
-        dirs.map((dir) => bridge.takeApprovedRoot(dir)),
+        dirs.map((dir) => shown.get(dir)),
       );
       return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
     },
