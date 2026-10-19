@@ -74,6 +74,7 @@ LSP использует cwd цели и штатное управление р�
 [WorkspaceGrantState](../src/host.ts) сохраняет начальный корень и явно принятые корни в session custom entry `omp-agent-nav.workspace` (NAV-06).
 Штатный move может убрать текущую B из additionalDirectories; отдельный ledger сохраняет grant B и не создаёт grant для посещённого worktree.
 Обёртки add/remove/set фиксируют явные изменения; AsyncLocalStorage transition отличает обновление представления native от пользовательского отзыва.
+Approval вычисляется синхронно, поэтому `moveNeedsGrant` и превью выдаваемого корня используют `realpathSync` и уже загруженный модуль VCS (`previewProjectRoot`: realpath, для Git-каталога — realpath primary). Execute выдаёт грант через полный асинхронный `resolveProjectIdentity`. В одиночном пакете между approval и execute другие инструменты не выполняются, поэтому показанный и выданный корень совпадают.
 
 Проект определяется через штатные Git info/commonDir/worktrees. Realpath и границы сегментов проверяются для корней и целей; metadata текущего и разрешённых проектов запрещена, включая separate gitDir и symlink aliases.
 

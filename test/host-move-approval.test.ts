@@ -36,6 +36,13 @@ const { Type } = await runtime.importModule<{
   };
 }>("@oh-my-pi/omptype/typebox");
 
+async function git(cwd: string, ...args: string[]): Promise<void> {
+  const child = Bun.spawn(["git", ...args], { cwd, stdout: "ignore", stderr: "pipe" });
+  if (await child.exited) {
+    throw new Error(`git ${args.join(" ")} failed: ${await new Response(child.stderr).text()}`);
+  }
+}
+
 const temporary: string[] = [];
 afterEach(async () => {
   while (temporary.length) {
@@ -219,6 +226,58 @@ test("task.cwd outside roots keeps the permission failure with the grant hint", 
     expect(failure).toBeInstanceOf(NavigationError);
     expect(failure.suggestedGrants).toEqual([f.c]);
     expect(failure.message).toContain("workspace_grant");
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
+test("a granted root reached through a symlink alias needs no approval (M09-wg)", async () => {
+  const f = await fixture();
+  f.capture();
+  try {
+    // macOS /var → /private/var: the ledger holds realpaths, the model may send the alias.
+    const alias = join(f.root, "C-alias");
+    await fs.symlink(f.c, alias);
+    expect(f.approval({ dir: alias })).toEqual(expect.objectContaining({ policy: "prompt" }));
+    expect(f.definition?.formatApprovalDetails?.({ dir: alias })).toEqual([
+      `dir: ${alias} → grant: ${f.c}`,
+    ]);
+    await f.bridge.grantWorkspaceDirs(f.ctx, [f.c]);
+    expect(f.approval({ dir: alias })).toBe("write");
+    expect(f.approval({ dir: f.c })).toBe("write");
+    const receipt = (await f.execute(alias)) as { details: { status: string; target: string } };
+    expect(receipt.details.status).toBe("queued");
+    expect(receipt.details.target).toBe(f.c);
+  } finally {
+    f.coordinator.dispose();
+  }
+});
+
+test("a missing target and a worktree of an accepted project need no approval", async () => {
+  const f = await fixture();
+  f.capture();
+  try {
+    expect(f.approval({ dir: join(f.root, "missing") })).toBe("write");
+    await git(f.c, "init", "-b", "main");
+    await git(
+      f.c,
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "fixture",
+    );
+    const worktree = join(f.root, "C-worktree");
+    await git(f.c, "worktree", "add", "-b", "fixture", worktree);
+    expect(f.approval({ dir: worktree })).toEqual(expect.objectContaining({ policy: "prompt" }));
+    expect(f.definition?.formatApprovalDetails?.({ dir: worktree })).toEqual([
+      `dir: ${worktree} → grant: ${f.c}`,
+    ]);
+    await f.bridge.grantWorkspaceDirs(f.ctx, [f.c]);
+    expect(f.approval({ dir: worktree })).toBe("write");
   } finally {
     f.coordinator.dispose();
   }

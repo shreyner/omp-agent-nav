@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import { homedir } from "node:os";
 import * as path from "node:path";
@@ -191,24 +192,55 @@ export class WorkspaceNavigation {
   readonly #initialRoot: Promise<string>;
   #initialRootValue?: string;
   readonly #vcs: Promise<NativeVcs>;
+  #vcsValue?: NativeVcs;
 
   constructor(
     readonly runtime: NavigationRuntime,
     readonly options: NavigationOptions,
   ) {
     this.#vcs = runtime.importModule<NativeVcs>("@oh-my-pi/pi-natives/vcs");
+    this.#vcs.then(
+      (vcs) => {
+        this.#vcsValue = vcs;
+      },
+      () => {},
+    );
     this.#initialRoot = resolveProjectIdentity(runtime, options.initialCwd).then((identity) => {
       this.#initialRootValue = identity.mainRoot;
       return identity.mainRoot;
     });
+    // A vanished starting project must not surface as an unhandled rejection (fatal in omp).
+    this.#initialRoot.catch(() => {});
   }
 
   get resolvedInitialRoot(): string | undefined {
     return this.#initialRootValue;
   }
 
+  async initialRoot(): Promise<string | undefined> {
+    return await this.#initialRoot.catch(() => undefined);
+  }
+
+  /** Sync best effort for approval prompts: realpath, a worktree resolves to its primary checkout. */
+  previewProjectRoot(directory: string): string | undefined {
+    let canonical: string;
+    try {
+      canonical = realpathSync(directory);
+    } catch {
+      return undefined;
+    }
+    try {
+      const primary = this.#vcsValue?.git(canonical)?.primaryRoot();
+      return primary ? realpathSync(primary) : canonical;
+    } catch {
+      return canonical;
+    }
+  }
+
   async #roots(): Promise<string[]> {
-    const roots = [await this.#initialRoot];
+    // A vanished starting project cannot authorize anything, like a vanished grant below.
+    const initial = await this.initialRoot();
+    const roots = initial ? [initial] : [];
     for (const directory of this.options.getWorkspaceRoots()) {
       try {
         roots.push(await existingDirectory(path.resolve(directory)));

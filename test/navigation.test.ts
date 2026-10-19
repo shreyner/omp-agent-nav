@@ -88,6 +88,29 @@ async function fixture(customRuntime: NavigationRuntime = runtime) {
 }
 
 describe("accepted roots and project identity", () => {
+  test("a vanished starting project neither crashes the host nor blocks granted roots", async () => {
+    const f = await fixture();
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", record);
+    try {
+      // A resumed session whose starting project was deleted since (CR-3).
+      const nav = new WorkspaceNavigation(runtime, {
+        initialCwd: path.join(f.root, "deleted"),
+        getCwd: () => f.a,
+        getWorkspaceRoots: () => [f.a, f.b],
+        getLiveAgentCwds: () => [],
+        getSettings: () => f.settings,
+      });
+      await Bun.sleep(20);
+      expect(unhandled).toEqual([]);
+      expect(await nav.initialRoot()).toBeUndefined();
+      expect(await nav.validateMove(f.b)).toBe(f.b);
+    } finally {
+      process.off("unhandledRejection", record);
+    }
+  });
+
   test("canonical boundaries do not authorize symlink escapes or visited/revoked projects", async () => {
     const f = await fixture();
     await expect(f.nav.validateMove(f.b)).rejects.toThrow("permission");

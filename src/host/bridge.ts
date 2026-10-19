@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { resolve, sep } from "node:path";
 
 import {
@@ -515,32 +516,56 @@ export class WorkspaceBridge {
     dirs: string[],
   ): Promise<{ granted: string[]; skipped: string[]; roots: string[] }> {
     const session = this.currentSession(ctx);
-    this.coordinator(ctx);
+    const navigation = this.coordinator(ctx).navigation;
     const grants = this.#grantStates.get(session.sessionManager);
-    const granted: string[] = [];
-    const skipped: string[] = [];
-    const accepted = new Set(grants?.roots() ?? session.sessionManager.getAdditionalDirectories());
+    const manager = session.sessionManager as Partial<GrantManager>;
+    if (typeof manager.addWorkspaceDirectory !== "function") {
+      throw new Error("This omp session manager does not support adding workspace directories.");
+    }
+    // Resolve every directory before granting any, so one bad path grants nothing.
+    const candidates: string[] = [];
     for (const dir of dirs) {
       const lexical = resolve(session.sessionManager.getCwd(), dir);
       if (lexical.split(sep).includes(".git")) {
         throw new Error("Git metadata cannot become a workspace root.");
       }
-      const identity = await resolveProjectIdentity(this.runtime, lexical);
-      const candidate = identity.mainRoot;
-      if (accepted.has(candidate) || [...accepted].some((root) => pathIsWithin(root, candidate))) {
+      candidates.push((await resolveProjectIdentity(this.runtime, lexical)).mainRoot);
+    }
+    const initial = await navigation.initialRoot();
+    const accepted = [
+      ...(initial ? [initial] : []),
+      ...(grants?.roots() ?? session.sessionManager.getAdditionalDirectories()),
+    ];
+    const granted: string[] = [];
+    const skipped: string[] = [];
+    for (const candidate of candidates) {
+      if (accepted.some((root) => pathIsWithin(root, candidate))) {
         skipped.push(candidate);
         continue;
       }
-      const manager = session.sessionManager as Partial<GrantManager>;
-      if (typeof manager.addWorkspaceDirectory !== "function") {
-        throw new Error("This omp session manager does not support adding workspace directories.");
-      }
-      const added = await manager.addWorkspaceDirectory(candidate);
-      const canonical = added ?? candidate;
-      accepted.add(canonical);
+      const canonical = (await manager.addWorkspaceDirectory(candidate)) ?? candidate;
+      accepted.push(canonical);
       granted.push(canonical);
     }
-    return { granted, skipped, roots: [...accepted] };
+    return {
+      granted,
+      skipped,
+      roots: grants?.roots() ?? session.sessionManager.getAdditionalDirectories(),
+    };
+  }
+
+  /** Root a grant for `dir` would accept, as shown in approval dialogs. */
+  grantPreview(dir: unknown): string | undefined {
+    const active = this.#activeMain;
+    if (!active || typeof dir !== "string" || !dir.trim()) {
+      return undefined;
+    }
+    try {
+      const target = expandPath(dir, active.session.sessionManager.getCwd());
+      return active.navigation.previewProjectRoot(target);
+    } catch {
+      return undefined;
+    }
   }
 
   /** session_move targets outside accepted roots need an on-the-spot human approval; execute re-validates. */
@@ -556,7 +581,12 @@ export class WorkspaceBridge {
     }
     let target: string;
     try {
-      target = expandPath(dir, active.session.sessionManager.getCwd());
+      const lexical = expandPath(dir, active.session.sessionManager.getCwd());
+      if (lexical.split(sep).includes(".git")) {
+        return false;
+      }
+      // Ledger roots are realpaths (macOS /var → /private/var); a missing target is rejected by validateMove.
+      target = realpathSync(lexical);
     } catch {
       return false;
     }
@@ -569,7 +599,12 @@ export class WorkspaceBridge {
       active.navigation.resolvedInitialRoot ??
       active.grants?.initialCwd ??
       active.session.sessionManager.getCwd();
-    return ![initial, ...granted].some((root) => pathIsWithin(root, target));
+    // A worktree of an accepted project is accepted too (validateMove authorizes its primary).
+    const project = active.navigation.previewProjectRoot(target);
+    return ![initial, ...granted].some(
+      (root) =>
+        pathIsWithin(root, target) || (project !== undefined && pathIsWithin(root, project)),
+    );
   }
 
   sessionMoveApproval(

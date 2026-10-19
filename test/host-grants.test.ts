@@ -227,6 +227,17 @@ test("workspace_grant resolves a worktree to its primary, skips accepted roots, 
     await expect(bridge.grantWorkspaceDirs(ctx, [join(other, ".git")])).rejects.toThrow(
       "Git metadata",
     );
+    // The starting project is accepted already: no native "already the primary root" error.
+    const initial = await bridge.grantWorkspaceDirs(ctx, ["."]);
+    expect(initial.granted).toEqual([]);
+    expect(initial.skipped).toEqual([main]);
+    // Every directory resolves before any grant: one bad path grants nothing.
+    const third = join(root, "third");
+    await fs.mkdir(third);
+    await expect(bridge.grantWorkspaceDirs(ctx, [third, join(root, "missing")])).rejects.toThrow(
+      "Cannot open directory",
+    );
+    expect(manager.getAdditionalDirectories()).not.toContain(third);
     const resumed = SessionManager.inMemory(main);
     resumed.restoreState(manager.captureState());
     expect(new WorkspaceGrantState(resumed).roots()).toEqual([other]);

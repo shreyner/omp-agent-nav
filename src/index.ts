@@ -127,7 +127,7 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
     },
     formatApprovalDetails: (args) => {
       if (args && typeof args === "object" && "dirs" in args && Array.isArray(args.dirs)) {
-        return args.dirs.map((dir) => `dir: ${String(dir)}`);
+        return args.dirs.map((dir) => grantDetail(bridge, dir));
       }
       return undefined;
     },
@@ -192,6 +192,12 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
   });
 }
 
+/** The human approves the root that is actually granted, not only the path the model sent. */
+function grantDetail(bridge: WorkspaceBridge, dir: unknown): string {
+  const root = bridge.grantPreview(dir);
+  return root && root !== dir ? `dir: ${String(dir)} → grant: ${root}` : `dir: ${String(dir)}`;
+}
+
 export function registerSessionMoveTool(
   pi: ExtensionApiLike,
   bridge: WorkspaceBridge,
@@ -214,7 +220,10 @@ export function registerSessionMoveTool(
     approval: (args) => bridge.sessionMoveApproval(args),
     formatApprovalDetails: (args) => {
       const dir = (args as { dir?: unknown } | null | undefined)?.dir;
-      return typeof dir === "string" ? [`dir: ${dir}`] : undefined;
+      if (typeof dir !== "string") {
+        return undefined;
+      }
+      return bridge.moveNeedsGrant(dir) ? [grantDetail(bridge, dir)] : [`dir: ${dir}`];
     },
     loadMode: "essential",
     execute: async (id, params, signal, _update, ctx) => {
