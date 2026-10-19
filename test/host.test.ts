@@ -45,7 +45,13 @@ afterEach(async () => {
 });
 
 async function fixture(
-  options: { fail?: boolean; fatal?: boolean; gateBusy?: boolean; mixed?: boolean } = {},
+  options: {
+    fail?: boolean;
+    fatal?: boolean;
+    gateBusy?: boolean;
+    mixed?: boolean;
+    warning?: string;
+  } = {},
 ) {
   const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), "omp-nav-host-")));
   temporary.push(root);
@@ -142,6 +148,7 @@ async function fixture(
       manager.setCwdWithoutRelocation(cwd);
       agent.setSystemPrompt(["B-context"]);
       order.push("apply-end");
+      return options.warning;
     },
     withGate: async (operation) => {
       if (options.gateBusy) {
@@ -214,6 +221,15 @@ describe("real omp agent loop with fake provider", () => {
     expect(f.priorGateCalls()).toBe(0);
   });
 
+  test("a move applied with degraded project MCP carries the warning to the model", async () => {
+    const f = await fixture({ warning: "MCP startup failed for B: broken" });
+    await f.agent.prompt("move");
+    expect(f.manager.getCwd()).toBe(f.b);
+    const seen = JSON.stringify(f.mock.calls[1].context.messages);
+    expect(seen).toContain('\\"status\\":\\"applied\\"');
+    expect(seen).toContain('\\"warning\\":\\"MCP startup failed for B: broken\\"');
+  });
+
   test("failed preparation and BTW denial are model-visible with unchanged cwd", async () => {
     for (const options of [{ fail: true }, { gateBusy: true }]) {
       const f = await fixture(options);
@@ -281,7 +297,7 @@ test("relocation rollback restores storage cwd and context after preparation fai
   expect(calls).toBe(2);
 });
 
-test("restoring the previous project tolerates its broken MCP server but not lost memory (CR-5)", async () => {
+test("a broken project MCP server degrades a move or a restore to a warning, lost memory does not (CR-5)", async () => {
   const f = await fixture();
   const owner = {
     session: f.session,
@@ -336,6 +352,13 @@ test("restoring the previous project tolerates its broken MCP server but not los
     expect(String(failure)).toContain(`restored to ${f.a} (partially: MCP startup failed`);
     expect(published).toBe(1);
     expect(f.manager.getCwd()).toBe(f.a);
+    // A move whose project MCP starts only partially applies and reports the failure.
+    owner.applyCwdChange = async () => true;
+    expect(await bridge.relocate(f.session, f.b)).toContain("MCP startup failed");
+    expect(f.manager.getCwd()).toBe(f.b);
+    expect(published).toBe(2);
+    await bridge.relocate(f.session, f.a);
+    owner.applyCwdChange = async (cwd: string) => cwd === f.a;
     // Mandatory memory that cannot come back stops the run instead.
     bridge.setMemoryBridge({
       ensure: async (_session, cwd) => {

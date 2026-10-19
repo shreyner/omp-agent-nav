@@ -144,7 +144,7 @@ for await (const line of createInterface({ input: process.stdin })) {
   expect(loadedPaths).toEqual([a, b, a]);
 });
 
-test("restoring a project tolerates its broken MCP server; a move does not (CR-5)", async () => {
+test("a broken project MCP server does not fail the rescope: started tools publish, the failure is a warning", async () => {
   const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), "omp-nav-mcp-broken-")));
   temporary.push(root);
   const servers = {
@@ -166,6 +166,7 @@ test("restoring a project tolerates its broken MCP server; a move does not (CR-5
     enableMCP: true,
   };
   let refreshed = 0;
+  const promptCommands: unknown[][] = [];
   const session = {
     settings,
     getToolByName: (name: string) => (name === "read" ? { session: nativeScope } : undefined),
@@ -173,9 +174,12 @@ test("restoring a project tolerates its broken MCP server; a move does not (CR-5
     refreshMCPTools: async () => {
       refreshed++;
     },
+    setMCPPromptCommands: (commands: unknown[]) => {
+      promptCommands.push(commands);
+    },
   } as unknown as SessionLike;
-  await expect(rescopeProjectMcp(runtime, session, root)).rejects.toThrow("MCP startup failed");
-  expect(refreshed).toBe(0);
-  expect(await rescopeProjectMcp(runtime, session, root, false)).toContain("MCP startup failed");
+  expect(await rescopeProjectMcp(runtime, session, root)).toContain("MCP startup failed");
   expect(refreshed).toBe(1);
+  // The previous project's MCP prompt commands are dropped, as native reloadServers does.
+  expect(promptCommands).toEqual([[]]);
 });

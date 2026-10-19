@@ -21,7 +21,8 @@ export const NAVIGATION_TOOLS = new Set([
 
 interface CoordinatorDependencies {
   navigation: WorkspaceNavigation;
-  relocate(cwd: string): Promise<void>;
+  /** Resolves to a warning when the move applied with a degraded resource (project MCP). */
+  relocate(cwd: string): Promise<string | undefined>;
   session: SessionLike;
   withGate<T>(operation: () => Promise<T>): Promise<T>;
 }
@@ -165,10 +166,13 @@ export class WorkspaceCoordinator {
   }
 
   /** `context` is the agent loop's live context when called from the model-call hook. */
-  async applyPending(signal?: AbortSignal, context?: ModelCallContext): Promise<void> {
+  async applyPending(
+    signal?: AbortSignal,
+    context?: ModelCallContext,
+  ): Promise<WorkspaceResult | undefined> {
     const pending = this.#pending;
     if (!pending) {
-      return;
+      return undefined;
     }
     if (
       signal?.aborted ||
@@ -177,7 +181,7 @@ export class WorkspaceCoordinator {
       this.session.sessionManager.getCwd() !== pending.cwd
     ) {
       await this.cancel("The session changed or the request was aborted.", context);
-      return;
+      return undefined;
     }
     this.#pending = undefined;
     pending.detachAbort?.();
@@ -199,15 +203,15 @@ export class WorkspaceCoordinator {
         switch (pending.request.action) {
           case "move":
             result.target = await this.navigation.validateMove(pending.request.dir);
-            await this.#dependencies.relocate(result.target);
+            result.warning = await this.#dependencies.relocate(result.target);
             break;
           case "enter":
             result.target = await this.navigation.validateEnter(pending.request.path);
-            await this.#dependencies.relocate(result.target);
+            result.warning = await this.#dependencies.relocate(result.target);
             break;
           case "exit":
             result.target = await this.navigation.validateExit();
-            await this.#dependencies.relocate(result.target);
+            result.warning = await this.#dependencies.relocate(result.target);
             break;
           case "create": {
             const created = await this.navigation.createWorktree(pending.request);
@@ -232,12 +236,13 @@ export class WorkspaceCoordinator {
     }
     result.cwd = this.session.sessionManager.getCwd();
     if (pending.sessionId !== this.session.sessionManager.getSessionId()) {
-      return;
+      return result;
     }
     await this.#notice(result, context);
     if (fatal) {
       throw fatal;
     }
+    return result;
   }
 
   async cancel(reason: string, context?: ModelCallContext): Promise<void> {

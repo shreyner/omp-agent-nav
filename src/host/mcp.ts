@@ -19,17 +19,18 @@ export interface RescopableSession extends SessionLike {
   getActiveToolNames(): string[];
   getToolByName(name: string): unknown;
   refreshMCPTools(tools: unknown[]): Promise<void>;
+  setMCPPromptCommands?(commands: unknown[]): void;
 }
 
 /**
- * `strict: false` is for restoring the previous project after a failed move: the tools that did
- * start are published, as native startup does, and the failure is returned as a warning.
+ * Reconnects the session's project MCP to `cwd`. Like native startup, servers that failed or did
+ * not start in time do not fail the move: the tools that did start are published and the failure
+ * is returned as a warning.
  */
 export async function rescopeProjectMcp(
   runtime: RuntimeModules,
   session: SessionLike,
   cwd: string,
-  strict = true,
 ): Promise<string | undefined> {
   const native = findNativeToolSession(session);
   if (native.enableMCP === false) {
@@ -50,6 +51,8 @@ export async function rescopeProjectMcp(
   const capabilities = await runtime.importModule<{ reset(): void }>("capability/index.ts");
   capabilities.reset();
   await manager.disconnectAll();
+  // Native reloadServers drops the previous project's MCP prompt commands the same way.
+  active.setMCPPromptCommands?.([]);
   // The installed SDK's prompt/notification closures retain this same manager.
   manager.cwd = cwd;
   const [notifications, projectConfig, startupTimeout, browserEnabled] = await Promise.all([
@@ -78,9 +81,6 @@ export async function rescopeProjectMcp(
   let warning: string | undefined;
   if (result.errors.size || startup.failed.length || startup.pending.length) {
     warning = `MCP startup failed for ${cwd}: ${JSON.stringify({ errors: [...result.errors], ...startup })}`;
-    if (strict) {
-      throw new Error(warning);
-    }
   }
   await active.refreshMCPTools(manager.getTools());
   return warning;

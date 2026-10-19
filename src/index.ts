@@ -2,7 +2,7 @@ import { installHostBridge, NAVIGATION_TOOLS, type WorkspaceBridge } from "./hos
 import { installMemoryBridge } from "./memory";
 import { createRuntime } from "./runtime";
 import { installTaskTool } from "./task";
-import { type ExtensionApiLike, type WorkspaceRequest } from "./types";
+import { type ExtensionApiLike, type ExtensionContextLike, type WorkspaceRequest } from "./types";
 
 interface SchemaBuilder {
   Array(items: unknown, options?: { minItems?: number }): unknown;
@@ -144,17 +144,28 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
       }
       const coordinator = bridge.coordinator(ctx);
       await coordinator.request({ action: "move", dir: args });
-      await coordinator.applyPending();
+      const result = await coordinator.applyPending();
+      if (result?.status === "failed") {
+        throw new Error(result.error);
+      }
+      if (result?.warning) {
+        commandUi(ctx).notify(result.warning, "warning");
+      }
     },
   });
   registerRootsCommand(pi, bridge);
+}
+
+/** Command output; a no-op in print/json modes, as for every extension command. */
+function commandUi(ctx: ExtensionContextLike) {
+  return ctx.ui as { notify(message: string, type?: "info" | "warning" | "error"): void };
 }
 
 export function registerRootsCommand(pi: ExtensionApiLike, bridge: WorkspaceBridge): void {
   pi.registerCommand("nav-roots", {
     description: "List workspace roots, or revoke a granted one: /nav-roots revoke <dir>.",
     handler: async (args, ctx) => {
-      const ui = ctx.ui as { notify(message: string, type?: "info" | "warning" | "error"): void };
+      const ui = commandUi(ctx);
       const revoke = /^revoke\s+(.+)$/.exec(args.trim());
       if (!args.trim()) {
         const roots = await bridge.listRoots(ctx);

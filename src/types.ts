@@ -13,6 +13,7 @@ export interface WorkspaceResult {
   result?: unknown;
   status: "queued" | "applied" | "failed" | "cancelled";
   target?: string;
+  warning?: string;
 }
 
 export interface SettingsLike {

@@ -459,26 +459,28 @@ export class WorkspaceBridge {
     await grants.persist();
   }
 
-  async relocate(session: SessionLike, cwd: string): Promise<void> {
+  /** Resolves to a warning when project MCP of `cwd` started only partially. */
+  async relocate(session: SessionLike, cwd: string): Promise<string | undefined> {
     const previous = session.sessionManager.captureState();
     if (previous.cwd === cwd) {
-      return;
+      return undefined;
     }
     await session.settleMemoryBackend();
     await session.sessionManager.flush();
     try {
       await this.#adoptNativeRoots(session, cwd);
       await session.moveSession(cwd);
-      await this.#rescope(session, cwd);
+      const warning = await this.#rescope(session, cwd);
       await this.#coordinators.get(session.sessionManager)?.navigation.validateMove(cwd);
       await session.refreshBaseSystemPrompt();
       await this.notifyAfterRelocation(session);
+      return warning;
     } catch (error) {
       let warning: string | undefined;
       try {
         await session.sessionManager.rollbackMove(previous);
         this.#grants(session).reload();
-        warning = await this.#rescope(session, previous.cwd, false);
+        warning = await this.#rescope(session, previous.cwd);
         await session.refreshBaseSystemPrompt();
         await this.notifyAfterRelocation(session);
       } catch (restoreError) {
@@ -493,31 +495,26 @@ export class WorkspaceBridge {
   }
 
   /**
-   * Memory and project MCP of `cwd`. Restoring the previous project after a failed move
-   * (`strictMcp: false`) tolerates flaky MCP servers like native startup and returns the failure
-   * as a warning. Memory stays strict: a run must not continue without mandatory memory, and a
-   * failure here stops it; the next prompt retries the startup.
+   * Memory and project MCP of `cwd`. Project MCP tolerates flaky servers like native startup: the
+   * tools that started are published and the failure comes back as a warning. Memory stays
+   * strict: a run must not continue without mandatory memory; the next prompt retries startup.
    */
-  async #rescopeResources(
-    session: SessionLike,
-    cwd: string,
-    strictMcp: boolean,
-  ): Promise<string | undefined> {
+  async #rescopeResources(session: SessionLike, cwd: string): Promise<string | undefined> {
     await this.#memory?.ensure(session, cwd);
     if (typeof (session as Partial<RescopableSession>).getToolByName === "function") {
-      return await rescopeProjectMcp(this.runtime, session, cwd, strictMcp);
+      return await rescopeProjectMcp(this.runtime, session, cwd);
     }
     return undefined;
   }
 
-  async #rescope(session: SessionLike, cwd: string, strictMcp = true): Promise<string | undefined> {
+  async #rescope(session: SessionLike, cwd: string): Promise<string | undefined> {
     const owner = this.owner(session);
     let warning: string | undefined;
     if (owner) {
       if (!(await owner.applyCwdChange(cwd))) {
         throw new Error(`The TUI could not prepare workspace ${cwd}.`);
       }
-      warning = await this.#rescopeResources(session, cwd, strictMcp);
+      warning = await this.#rescopeResources(session, cwd);
       await session.refreshSkillsAndCommands();
       owner.updateEditorBorderColor();
       await owner.reloadTodos();
@@ -536,7 +533,7 @@ export class WorkspaceBridge {
       await session.settings.reloadForCwd(cwd);
       await backend.rebindMemoryBackendForCwd(session);
       discovery.clearClaudePluginRootsCache();
-      warning = await this.#rescopeResources(session, cwd, strictMcp);
+      warning = await this.#rescopeResources(session, cwd);
       await session.refreshSkillsAndCommands();
     }
     return warning;
