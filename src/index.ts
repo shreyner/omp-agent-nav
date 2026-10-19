@@ -19,7 +19,7 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
   const bridge = await installHostBridge(runtime);
   const memory = await installMemoryBridge(runtime);
   bridge.setMemoryBridge(memory);
-  await installTaskTool(pi, runtime, bridge, memory);
+  await installTaskTool(pi, runtime, bridge);
   const { Type } = await runtime.importModule<{ Type: SchemaBuilder }>("@oh-my-pi/omptype/typebox");
   const path = (description: string) => Type.String({ description, minLength: 1 });
   const tools: Array<{

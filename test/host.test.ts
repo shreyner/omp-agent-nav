@@ -114,7 +114,6 @@ async function fixture(
     sessionManager: manager,
     sessionId: manager.getSessionId(),
     isCompacting: false,
-    isStreaming: true,
     settings: { get: () => undefined, flush: async () => {}, reloadForCwd: async () => {} },
     refreshSkillsAndCommands: async () => {},
     refreshBaseSystemPrompt: async () => {},

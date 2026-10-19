@@ -332,7 +332,6 @@ async function createMemoryBridge(runtime: RuntimeModules): Promise<MemoryBridge
       identity.bankPath,
     );
     librarySettingsForSession.set(session, memorySettings);
-    await syncCustomMemoryProviders(runtime, options.modelRegistry);
     await originalStart({
       ...options,
       session: librarySession(session),
@@ -522,35 +521,5 @@ async function captureNativeStateSlot(
   } finally {
     await state?.dispose({ retain: false, consolidate: false });
     await fs.rm(temporary, { recursive: true, force: true });
-  }
-}
-
-async function syncCustomMemoryProviders(
-  runtime: RuntimeModules,
-  modelRegistry: unknown,
-): Promise<void> {
-  if (runtime.mode === "source-test") {
-    return;
-  }
-  const models =
-    (modelRegistry as { getAll?(kind: string): Array<{ api: string }> }).getAll?.("all") ?? [];
-  if (!models.length) {
-    return;
-  }
-  const [nativeRegistry, ownedRegistry, ai] = await Promise.all([
-    runtime.importModule<{ getCustomApi(api: string): unknown }>("@oh-my-pi/pi-ai/api-registry"),
-    runtime.importLibraryModule<{
-      registerCustomApi(api: string, stream: (...args: unknown[]) => unknown, source: string): void;
-    }>("@oh-my-pi/pi-ai/api-registry"),
-    runtime.importModule<{ streamSimple(...args: unknown[]): unknown }>("@oh-my-pi/pi-ai"),
-  ]);
-  for (const api of new Set(models.map((model) => model.api))) {
-    if (nativeRegistry.getCustomApi(api)) {
-      ownedRegistry.registerCustomApi(
-        api,
-        (...args) => ai.streamSimple(...args),
-        "omp-agent-nav-memory",
-      );
-    }
   }
 }

@@ -62,9 +62,7 @@ export interface SessionLike {
     setSystemPrompt(prompt: string[]): void;
     state: { tools: unknown[]; systemPrompt: string[]; messages: unknown[] };
   };
-  applyMemoryBackend(options?: { retainMnemopi?: boolean }): Promise<void>;
   isCompacting: boolean;
-  isStreaming: boolean;
   moveSession(cwd: string): Promise<void>;
   refreshBaseSystemPrompt(commitIf?: () => boolean): Promise<void>;
   refreshSkillsAndCommands(): Promise<void>;
@@ -72,7 +70,6 @@ export interface SessionLike {
   sessionManager: SessionManagerLike;
   settings: SettingsLike;
   settleMemoryBackend(): Promise<void>;
-  subscribe(listener: (event: { type: string; [key: string]: unknown }) => void): () => void;
 }
 
 export interface RegistryRef {

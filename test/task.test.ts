@@ -271,7 +271,7 @@ async function fixture(
       }
     },
   } as ExtensionApiLike;
-  await installTaskTool(pi, runtime, bridge, memory);
+  await installTaskTool(pi, runtime, bridge);
   const ctx = { agent: { id: "Main", kind: "main" } } as ExtensionContextLike;
   for (const handler of start ? startHandlers : []) {
     await handler({ type: "session_start" }, ctx);
@@ -363,7 +363,7 @@ export default async function(pi) {
   const runtime=createRuntime(pi.pi,${JSON.stringify(runtime.packageRoot)});
   const bridge=await installHostBridge(runtime), memory=await installMemoryBridge(runtime);
   bridge.setMemoryBridge(memory);
-  await installTaskTool(pi,runtime,bridge,memory);
+  await installTaskTool(pi,runtime,bridge);
   pi.on("session_start",async(_event,ctx)=>memory.ensure(bridge.currentSession(ctx)));
 }
 `,

@@ -2,7 +2,6 @@ import * as fs from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
 import { type WorkspaceBridge } from "./host";
-import { type MemoryBridge } from "./memory";
 import {
   type ExtensionApiLike,
   type RuntimeModules,
@@ -421,7 +420,6 @@ export async function installTaskTool(
   pi: ExtensionApiLike,
   runtime: RuntimeModules,
   bridge: WorkspaceBridge,
-  _memory: MemoryBridge,
 ): Promise<void> {
   const [{ TaskTool }, { getTaskSchema }, registry, policy, { Semaphore }] = await Promise.all([
     runtime.importModule<{ TaskTool: TaskToolFactory }>("task/index.ts"),

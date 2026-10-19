@@ -111,7 +111,6 @@ const hostedModules: Record<string, () => Promise<unknown>> = {
   "registry/agent-registry.ts": () => import("@oh-my-pi/pi-coding-agent/registry/agent-registry"),
   "session/agent-session.ts": () => import("@oh-my-pi/pi-coding-agent/session/agent-session"),
   "session/session-tools.ts": () => import("@oh-my-pi/pi-coding-agent/session/session-tools"),
-  "session/session-manager.ts": () => import("@oh-my-pi/pi-coding-agent/session/session-manager"),
   "session/artifacts.ts": () => import("@oh-my-pi/pi-coding-agent/session/artifacts"),
   "config/all-settings.ts": () => import("@oh-my-pi/pi-coding-agent/config/all-settings"),
   "config/registry.ts": () => import("@oh-my-pi/pi-coding-agent/config/registry"),
@@ -145,8 +144,6 @@ const hostedModules: Record<string, () => Promise<unknown>> = {
   "@oh-my-pi/pi-utils/dirs": () => import("@oh-my-pi/pi-utils"),
   "@oh-my-pi/pi-natives/vcs": () => import("@oh-my-pi/pi-natives/vcs"),
   "@oh-my-pi/omptype/typebox": () => import("@sinclair/typebox"),
-  "@oh-my-pi/pi-ai": () => import("@oh-my-pi/pi-ai"),
-  "@oh-my-pi/pi-ai/api-registry": () => import("@oh-my-pi/pi-ai/api-registry"),
 };
 
 /**
@@ -216,7 +213,6 @@ export function createRuntime(host: HostNamespace, sourceTestRoot?: string): Run
           "system-prompt.ts",
           "internal-urls/router.ts",
           "@oh-my-pi/pi-utils",
-          "@oh-my-pi/pi-ai/api-registry",
         ].includes(specifier)
       ) {
         throw new Error(`Unsupported extension-owned omp library: ${specifier}.`);
