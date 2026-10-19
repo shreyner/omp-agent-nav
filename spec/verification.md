@@ -104,10 +104,10 @@ V01–V16 ниже описывают контракт и покрытие. Гд
 ### V01. A → B → A, контекст и LSP
 
 **NAV-01, NAV-04.** [runtime.test.ts](../test/runtime.test.ts), [integration-modes.test.ts](../test/integration-modes.test.ts).
-Print проверяет неизменный SID, перенос/возврат JSONL и AGENTS/SYSTEM цели. TUI/RPC дополнительно проверяют settings, skills, файловые команды и заголовки сохранённой сессии.
+Print проверяет неизменный SID, перенос/возврат JSONL и AGENTS цели. С 2026-10-19 он же закрепляет границу SYSTEM.md: после A → B действует SYSTEM.md стартового A, а SYSTEM.md цели B не подхватывается. TUI/RPC дополнительно проверяют settings, skills, файловые команды и заголовки сохранённой сессии.
 TUI/RPC подтвердили отсутствие AGENTS чужого разрешённого проекта при A → B → A. Заголовок сохранённой сессии содержит прежний SID и вернувшийся cwd; доступ к B сохранён отдельно.
 Для Go `diagnostics file:"*"` использует штатный workspace checker (`go build ./...`), а `*.go` — настоящий gopls. Обе проверки различили ошибочную WT-ветку и корректный primary; после exit gopls снова работал в primary.
-Print также прошёл A default → B text override → A default → B template. Явный CLI append появился в `{{appendPrompt}}` B и сохранился в штатном завершающем frame; generated memory/MCP append сохраняются в этом frame и не дублируются в переменную prefix.
+До 2026-10-19 print также проходил A default → B text override → A default → B template для клона рендерера; эти проверки удалены вместе с клоном.
 
 <a id="v02"></a>
 ### V02. Queued → apply → следующий запрос модели

@@ -36,7 +36,7 @@ A11 проверен по тождеству объектов живого host,
 A12 подтверждён отдельными процессами обычного omp: независимые состояния primary/children, shared bank, native явная запись, отказ startup до провайдера и закрытие/rebind без остановки собственного embedding client.
 Slot обнаруживается через временное dummy-состояние без embeddings/LLM/autoRecall; probe закрывается и очищается. Clear защищает фактически открытые базы и сериализован с startup, включая rehydrated state.
 A13 подтверждён новым интеграционным прогоном обычного omp, включая загрузку через config и реальные зарегистрированные task toolCalls, main move/park/revive. Source-test harness дополнительно проверяет ошибки и штатные классы; его configured fixture явно использует source-test runtime, а не объявляет себя bundled запуском.
-Узкая граница SYSTEM_TEMPLATE: переменная `appendPrompt` повторно отрисованного prefix получает явный CLI append; generated memory/MCP блоки остаются целиком в штатном завершающем frame. Это точная область adapter, а не перенесённый в долг дефект.
+SYSTEM.md/SYSTEM_TEMPLATE после переезда не перерисовываются ([граница](behavior.md#system-md)); до 2026-10-19 это делал клон рендерера, удалённый по решению пользователя.
 
 ## Принятые решения пользователя
 

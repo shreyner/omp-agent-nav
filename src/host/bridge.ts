@@ -7,8 +7,7 @@ import {
   resolveProjectIdentity,
   WorkspaceNavigation,
 } from "../navigation";
-import { installInstructionScope, readSetting, SUPPORTED_OMP_VERSIONS } from "../runtime";
-import { findNativeToolSession, type NativeTaskSession } from "../task";
+import { installInstructionScope, SUPPORTED_OMP_VERSIONS } from "../runtime";
 import {
   type ExtensionContextLike,
   type HostNamespace,
@@ -24,47 +23,6 @@ interface MemoryBridgeLike {
   ensure(session: SessionLike, sourceCwd?: string): Promise<unknown>;
 }
 
-interface PromptRenderContext {
-  active: RescopableSession & {
-    getAllToolNames(): string[];
-    getEnabledToolNames(): string[];
-    getEvalPreludes(): unknown[];
-    getXdevToolEntries(): Array<{ name: string }>;
-    renderedSkills: unknown[];
-    obfuscator?: { obfuscates(): boolean };
-    skillsSettings: unknown;
-    model?: { provider: string; id: string };
-  };
-  activeRepoContext: unknown;
-  docs: { catalog: Map<string, unknown> } | undefined;
-  inline: boolean;
-  modules: {
-    spawn: { isScoutSpawnable(disabled: unknown, spawns: unknown): boolean };
-    policy: { sessionDelegationBias(session: unknown): unknown };
-    irc: { isIrcEnabled(settings: unknown, depth: number): boolean };
-    autoQa: { isAutoQaEnabled(settings: unknown): boolean };
-    xdev: { renderXdevPromptDocs(docs: unknown, elsewhere: Set<string>): string };
-    repoContext: { resolveActiveRepoContext(cwd: string): Promise<unknown> };
-  };
-  names: string[];
-  native: NativeTaskSession;
-  nativeTools: boolean;
-  override: { kind?: string; content: string } | undefined;
-  promptRules: Array<{ name: string; alwaysApply?: boolean; description?: string }>;
-  prompts: {
-    buildSystemPrompt(options: Record<string, unknown>): Promise<{ systemPrompt: string[] }>;
-    projectSystemPromptToolMetadata(
-      tools: Map<string, unknown>,
-      options: Record<string, unknown>,
-    ): unknown;
-  };
-  routedNames: Set<string>;
-  tools: Map<string, unknown>;
-  values: Record<string, unknown>;
-  workspaceTree: unknown;
-  xdevEntries: Array<{ name: string }>;
-}
-
 // omp re-imports the extension graph (`?mtime=`) for every subagent session, so module-local
 // state cannot see an earlier install. The process-wide key lives on the patched host prototype.
 const HOST_BRIDGE = Symbol.for("omp-agent-nav.host-bridge");
@@ -75,9 +33,6 @@ export class WorkspaceBridge {
   #coordinators = new WeakMap<object, WorkspaceCoordinator>();
   #memory?: MemoryBridgeLike;
   #grantStates = new WeakMap<object, WorkspaceGrantState>();
-  #promptWorkspaceTrees = new WeakMap<object, { cwd: string; tree: unknown }>();
-  #projectPrefixes = new WeakMap<object, { initial: string; current: string; append?: string }>();
-  #promptScopeChecked = new WeakSet<object>();
   #afterRelocation = new Set<(session: SessionLike) => Promise<void>>();
   #btwRunning = new WeakMap<object, number>();
   /** Grant roots shown in approval dialogs, by requested dir, per main session manager. */
@@ -123,371 +78,6 @@ export class WorkspaceBridge {
     for (const hook of this.#afterRelocation) {
       await hook(session);
     }
-  }
-
-  async prepareProjectPrompt(session: SessionLike): Promise<void> {
-    if (this.#promptScopeChecked.has(session)) {
-      return;
-    }
-    this.#promptScopeChecked.add(session);
-    const cli = await this.runtime.importModule<{
-      parseArgs(args: string[]): {
-        systemPrompt?: string;
-        systemPromptTemplate?: string;
-        appendSystemPrompt?: string;
-      };
-    }>("cli/args.ts");
-    const args = cli.parseArgs([...process.argv.slice(2)]);
-    if (args.systemPrompt !== undefined || args.systemPromptTemplate !== undefined) {
-      return;
-    }
-    if (!(await this.#discoverPromptOverride(session.sessionManager.getCwd()))) {
-      return;
-    }
-    const prefix = session.agent.state.systemPrompt[0];
-    if (prefix) {
-      const prompts = await this.runtime.importLibraryModule<{
-        resolvePromptInput(
-          input: string | undefined,
-          description: string,
-        ): Promise<string | undefined>;
-      }>("system-prompt.ts");
-      const append = await prompts.resolvePromptInput(
-        args.appendSystemPrompt,
-        "append system prompt",
-      );
-      this.#projectPrefixes.set(session, { initial: prefix, current: prefix, append });
-    }
-  }
-
-  async #discoverPromptOverride(
-    cwd: string,
-  ): Promise<{ kind?: string; content: string } | undefined> {
-    await this.runtime.importModule("capability/system-prompt.ts");
-    const capabilities = await this.runtime.importModule<{
-      loadCapability(
-        id: string,
-        options: { cwd: string },
-      ): Promise<{ items: Array<{ level: string; kind?: string; content: string }> }>;
-    }>("capability/index.ts");
-    const result = await capabilities.loadCapability("system-prompt", { cwd });
-    for (const level of ["project", "user"]) {
-      const text = result.items.find(
-        (item) => item.level === level && (item.kind ?? "text") === "text",
-      );
-      if (text) {
-        return text;
-      }
-      const template = result.items.find(
-        (item) => item.level === level && item.kind === "template" && item.content.trim(),
-      );
-      if (template) {
-        return template;
-      }
-    }
-  }
-
-  async refreshProjectPrompt(session: SessionLike): Promise<void> {
-    await this.prepareProjectPrompt(session);
-    const state = this.#projectPrefixes.get(session);
-    const sessionId = session.sessionManager.getSessionId();
-    const cwd = session.sessionManager.getCwd();
-    const current = session.agent.state.systemPrompt;
-    // Keep an intentional extension override; only own the automatically discovered prefix.
-    if (!state || (current[0] !== state.initial && current[0] !== state.current)) {
-      return;
-    }
-    const context = await this.#collectPromptContext(session, cwd);
-    const rendered = await context.prompts.buildSystemPrompt(
-      this.#promptOptions(session, cwd, state, context),
-    );
-    const latest = session.agent.state.systemPrompt;
-    if (
-      sessionId !== session.sessionManager.getSessionId() ||
-      cwd !== session.sessionManager.getCwd() ||
-      (latest[0] !== state.initial && latest[0] !== state.current)
-    ) {
-      return;
-    }
-    state.current = rendered.systemPrompt[0];
-    session.agent.setSystemPrompt([state.current, ...latest.slice(1)]);
-  }
-
-  async #collectPromptContext(session: SessionLike, cwd: string): Promise<PromptRenderContext> {
-    const native = findNativeToolSession(session);
-    const active = session as RescopableSession & {
-      getAllToolNames(): string[];
-      getEnabledToolNames(): string[];
-      getEvalPreludes(): unknown[];
-      getXdevToolEntries(): Array<{ name: string }>;
-      skills: unknown[];
-      renderedSkills: unknown[];
-      obfuscator?: { obfuscates(): boolean };
-      ttsrManager?: { getRules(): Array<{ name: string }> };
-      skillsSettings: unknown;
-      model?: { provider: string; id: string };
-    };
-    const prompts = await this.runtime.importLibraryModule<{
-      buildSystemPrompt(options: Record<string, unknown>): Promise<{ systemPrompt: string[] }>;
-      projectSystemPromptToolMetadata(
-        tools: Map<string, unknown>,
-        options: Record<string, unknown>,
-      ): unknown;
-    }>("system-prompt.ts");
-    const ids = [
-      "inlineToolDescriptors",
-      "personality",
-      "skillful",
-      "includeModelInPrompt",
-      "includeWorkspaceTree",
-      "task.disabledAgents",
-      "tools.xdevDocs",
-      "tools.xdevInlineDevices",
-      "task.eager",
-      "task.batch",
-      "task.maxConcurrency",
-      "tools.intentTracing",
-      "security.enabled",
-      "memory.backend",
-      "tui.renderMermaid",
-      "tui.renderSvg",
-      "tui.autoGraph",
-      "tui.reactions",
-    ];
-    const values = Object.fromEntries(
-      await Promise.all(
-        ids.map(async (id) => [id, await readSetting(this.runtime, session.settings, id)]),
-      ),
-    );
-    const inline =
-      values.inlineToolDescriptors === "on" ||
-      (values.inlineToolDescriptors === "auto" && active.model?.id.includes("gemini") === true);
-    const names = active.getEnabledToolNames();
-    const tools = new Map(
-      active.getAllToolNames().map((name) => [name, active.getToolByName(name)]),
-    );
-    const xdevEntries = active.getXdevToolEntries();
-    const dialect = await this.runtime.importModule<{
-      resolveDialect(format: unknown, model: unknown): unknown;
-    }>("sdk.ts");
-    const nativeTools =
-      dialect.resolveDialect(
-        await readSetting(this.runtime, session.settings, "tools.format"),
-        active.model,
-      ) === undefined;
-    const override = await this.#discoverPromptOverride(cwd);
-    const [
-      spawn,
-      policy,
-      irc,
-      autoQa,
-      xdev,
-      repoContext,
-      nativeRouter,
-      sourceRouter,
-      nativeUtils,
-      sourceUtils,
-      projections,
-    ] = await Promise.all([
-      this.runtime.importModule<{ isScoutSpawnable(disabled: unknown, spawns: unknown): boolean }>(
-        "task/spawn-policy.ts",
-      ),
-      this.runtime.importModule<{ sessionDelegationBias(session: unknown): unknown }>(
-        "task/prompt-policy.ts",
-      ),
-      this.runtime.importModule<{ isIrcEnabled(settings: unknown, depth: number): boolean }>(
-        "irc/messaging.ts",
-      ),
-      this.runtime.importModule<{ isAutoQaEnabled(settings: unknown): boolean }>(
-        "tools/report-tool-issue.ts",
-      ),
-      this.runtime.importModule<{
-        planXdevPromptDocs(
-          state: unknown,
-          mode: unknown,
-          inline: unknown,
-        ): { catalog: Map<string, unknown> };
-        renderXdevPromptDocs(docs: unknown, elsewhere: Set<string>): string;
-        listXdevTools(state: unknown): unknown[];
-      }>("tools/xdev.ts"),
-      this.runtime.importModule<{ resolveActiveRepoContext(cwd: string): Promise<unknown> }>(
-        "utils/active-repo-context.ts",
-      ),
-      this.runtime.importModule<{ InternalUrlRouter: { instance(): unknown } }>(
-        "internal-urls/router.ts",
-      ),
-      this.runtime.importLibraryModule<{ InternalUrlRouter: { instance(): unknown } }>(
-        "internal-urls/router.ts",
-      ),
-      this.runtime.importModule<{ getAgentDir(): string }>("@oh-my-pi/pi-utils"),
-      this.runtime.importLibraryModule<{ getAgentDir(): string }>("@oh-my-pi/pi-utils"),
-      this.runtime.importModule<{
-        collectMountedMCPToolRoutes(tools: unknown[]): unknown;
-        projectMountedMCPXdevGuidance(routes: unknown): { mappings: Array<{ name: string }> };
-      }>("session/session-tools.ts"),
-    ]);
-    // The library's renderer must consult the live URL registry, not its own singleton.
-    if (sourceRouter.InternalUrlRouter !== nativeRouter.InternalUrlRouter) {
-      sourceRouter.InternalUrlRouter.instance = () => nativeRouter.InternalUrlRouter.instance();
-    }
-    // PERSONALITY.md is the renderer's only remaining file lookup; bind its scope explicitly.
-    if (sourceUtils.getAgentDir() !== nativeUtils.getAgentDir()) {
-      throw new Error(
-        "The prompt renderer's agent directory differs from the running omp profile.",
-      );
-    }
-    let workspaceTree: unknown = {
-      rootPath: cwd,
-      rendered: "",
-      truncated: false,
-      totalLines: 0,
-      agentsMdFiles: [],
-    };
-    if (values.includeWorkspaceTree === true) {
-      let saved = this.#promptWorkspaceTrees.get(session);
-      if (!saved || saved.cwd !== cwd) {
-        const sdk = dialect as typeof dialect & {
-          buildWorkspaceTree(cwd: string, options: { timeoutMs: number }): Promise<unknown>;
-        };
-        saved = { cwd, tree: await sdk.buildWorkspaceTree(cwd, { timeoutMs: 5_000 }) };
-        this.#promptWorkspaceTrees.set(session, saved);
-      }
-      workspaceTree = saved.tree;
-    }
-    const docs = native.xdev
-      ? xdev.planXdevPromptDocs(
-          native.xdev,
-          values["tools.xdevDocs"],
-          values["tools.xdevInlineDevices"],
-        )
-      : undefined;
-    const routed = projections.projectMountedMCPXdevGuidance(
-      projections.collectMountedMCPToolRoutes(native.xdev ? xdev.listXdevTools(native.xdev) : []),
-    );
-    const routedNames = new Set(
-      routed.mappings
-        .filter((mapping) => docs?.catalog.has(mapping.name))
-        .map((mapping) => mapping.name),
-    );
-    const ttsrNames = new Set(active.ttsrManager?.getRules().map((rule) => rule.name) ?? []);
-    const promptRules = (
-      (native.activeRules ?? []) as Array<{
-        name: string;
-        alwaysApply?: boolean;
-        description?: string;
-      }>
-    ).filter((rule) => !ttsrNames.has(rule.name));
-    const activeRepoContext = await repoContext.resolveActiveRepoContext(cwd).catch(() => null);
-    return {
-      native,
-      active,
-      prompts,
-      values,
-      inline,
-      names,
-      tools,
-      xdevEntries,
-      nativeTools,
-      override,
-      modules: { spawn, policy, irc, autoQa, xdev, repoContext },
-      workspaceTree,
-      docs,
-      routedNames,
-      promptRules,
-      activeRepoContext,
-    };
-  }
-
-  #tuiPromptFlags(session: SessionLike, values: Record<string, unknown>) {
-    const interactive = !!this.owner(session);
-    return {
-      renderMermaid: interactive && values["tui.renderMermaid"],
-      renderSvg: interactive && values["tui.renderSvg"],
-      autoGraph: interactive && values["tui.autoGraph"] !== "off",
-      reactions: interactive && values["tui.reactions"],
-    };
-  }
-
-  #promptOptions(
-    session: SessionLike,
-    cwd: string,
-    state: { initial: string; current: string; append?: string },
-    context: PromptRenderContext,
-  ): Record<string, unknown> {
-    const {
-      native,
-      active,
-      prompts,
-      values,
-      inline,
-      names,
-      tools,
-      xdevEntries,
-      nativeTools,
-      override,
-      modules,
-      workspaceTree,
-      docs,
-      routedNames,
-      promptRules,
-      activeRepoContext,
-    } = context;
-    return {
-      cwd,
-      resolvedCustomPrompt: override?.kind === "template" ? undefined : (override?.content ?? ""),
-      systemPromptTemplate: override?.kind === "template" ? override.content : undefined,
-      resolvedAppendSystemPrompt: state.append,
-      additionalWorkspaceRoots: [],
-      workspaceTree,
-      includeWorkspaceTree: values.includeWorkspaceTree,
-      activeRepoContext,
-      tools: prompts.projectSystemPromptToolMetadata(
-        tools,
-        inline || !nativeTools
-          ? { mode: "full" }
-          : { mode: "compact", toolNames: [...names, ...xdevEntries.map((entry) => entry.name)] },
-      ),
-      toolNames: names,
-      directToolNames: active.getActiveToolNames(),
-      inlineToolDescriptors: inline,
-      nativeTools,
-      skills: values.skillful ? active.renderedSkills : [],
-      skillsSettings: active.skillsSettings,
-      skillDescriptions: { render: (skills: unknown[]) => skills },
-      contextFiles: native.contextFiles ?? [],
-      rules: promptRules.filter((rule) => rule.alwaysApply !== true && rule.description),
-      alwaysApplyRules: promptRules.filter((rule) => rule.alwaysApply === true),
-      evalPreludes: active.getEvalPreludes(),
-      xdevTools: xdevEntries,
-      model:
-        (native.getActiveModelString as (() => string | undefined) | undefined)?.() ??
-        (active.model ? `${active.model.provider}/${active.model.id}` : undefined),
-      includeModelInPrompt: values.includeModelInPrompt,
-      scoutAvailable: modules.spawn.isScoutSpawnable(
-        values["task.disabledAgents"],
-        native.getSessionSpawns?.() ?? "*",
-      ),
-      delegationBias: modules.policy.sessionDelegationBias(native),
-      taskIrcEnabled: modules.irc.isIrcEnabled(
-        session.settings,
-        (native.taskDepth as number | undefined) ?? 0,
-      ),
-      autoQaEnabled: modules.autoQa.isAutoQaEnabled(session.settings),
-      secretsEnabled: active.obfuscator?.obfuscates() === true,
-      writeTransportOnly:
-        native.deviceOnlyWrite === true && native.pendingFullWriteDescription !== true,
-      xdevDocs: docs ? modules.xdev.renderXdevPromptDocs(docs, routedNames) : "",
-      personality: values.personality,
-      eagerTasks: values["task.eager"] !== "default",
-      eagerTasksAlways: values["task.eager"] === "always",
-      taskBatch: values["task.batch"],
-      taskMaxConcurrency: values["task.maxConcurrency"],
-      intentField: values["tools.intentTracing"] ? "i" : undefined,
-      memoryBackend: values["memory.backend"] === "off" ? undefined : values["memory.backend"],
-      securityEnabled: values["security.enabled"],
-      settingsApproval: native.settingsApproval === true,
-      ...this.#tuiPromptFlags(session, values),
-    };
   }
 
   currentSession(ctx: ExtensionContextLike): SessionLike {
@@ -727,7 +317,6 @@ export class WorkspaceBridge {
       coordinator = new WorkspaceCoordinator({
         session,
         navigation,
-        beforeModelCall: () => this.refreshProjectPrompt(session),
         relocate: (cwd) => this.relocate(session, cwd),
         withGate: async (operation) => {
           if ((this.#btwRunning.get(session) ?? 0) > 0) {
@@ -799,7 +388,6 @@ export class WorkspaceBridge {
       await this.#coordinators.get(session.sessionManager)?.navigation.validateMove(cwd);
       await this.#grantStates.get(session.sessionManager)?.synchronize();
       await session.refreshBaseSystemPrompt();
-      await this.refreshProjectPrompt(session);
       await this.notifyAfterRelocation(session);
     } catch (error) {
       let warning: string | undefined;
@@ -808,7 +396,6 @@ export class WorkspaceBridge {
         warning = await this.#rescope(session, previous.cwd, false);
         await this.#grantStates.get(session.sessionManager)?.synchronize();
         await session.refreshBaseSystemPrompt();
-        await this.refreshProjectPrompt(session);
         await this.notifyAfterRelocation(session);
       } catch (restoreError) {
         throw new WorkspaceRollbackError(

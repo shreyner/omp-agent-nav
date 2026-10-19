@@ -59,8 +59,7 @@ export interface SessionLike {
       hook: (signal: AbortSignal | undefined, context: ModelCallContext) => Promise<void>,
     ): () => void;
     appendMessage(message: unknown): void;
-    setSystemPrompt(prompt: string[]): void;
-    state: { tools: unknown[]; systemPrompt: string[]; messages: unknown[] };
+    state: { tools: unknown[]; messages: unknown[] };
   };
   isCompacting: boolean;
   moveSession(cwd: string): Promise<void>;

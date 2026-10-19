@@ -112,11 +112,6 @@ test("ordinary CLI loads the configured extension and relocates native headless 
     join(destination, ".omp", "SYSTEM.md"),
     "Destination SYSTEM_B_UNIQUE instructions.",
   );
-  await fs.writeFile(
-    join(destination, ".omp", "config.yml"),
-    "includeModelInPrompt: false\nincludeWorkspaceTree: true\ntask:\n  disabledAgents:\n    - scout\ndev:\n  autoqa: false\n",
-  );
-  await fs.writeFile(join(agentDir, "PERSONALITY.md"), "NATIVE_PERSONALITY_UNIQUE");
   await fs.mkdir(join(destination, ".omp", "agents"));
   await fs.writeFile(
     join(destination, ".omp", "agents", "scope-check.md"),
@@ -137,7 +132,6 @@ test("ordinary CLI loads the configured extension and relocates native headless 
 import * as fsSync from "node:fs";
 import { createMockModel } from "@oh-my-pi/pi-ai/providers/mock";
 import { registerCustomApi } from "@oh-my-pi/pi-ai/api-registry";
-import { InternalUrlRouter } from "@oh-my-pi/pi-coding-agent/internal-urls/router";
 export default async function(pi) {
   const { createRuntime } = await import(${JSON.stringify(join(import.meta.dir, "..", "src", "runtime.ts"))});
   const { installHostBridge } = await import(${JSON.stringify(join(import.meta.dir, "..", "src", "host.ts"))});
@@ -154,7 +148,6 @@ export default async function(pi) {
   } });
   pi.registerProvider("nav-fixture", { api: "nav-fixture-api", apiKey: "test-unused", baseUrl: "mock://", streamSimple: (_model, context, options) => mock.stream(mock, context, options), models: [{ id: "fixture", name: "Fixture", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 200000, maxTokens: 32000 }] });
   pi.on("session_start", async () => {
-    InternalUrlRouter.instance().register({ scheme: "nativefixture", spec: { backing: "virtual", immutable: true }, promptDoc: () => "nativefixture:// NATIVE_SCHEME_UNIQUE", resolve: async () => ({ content: "fixture" }) });
     registerCustomApi("nav-fixture-api", (_model, context, options) => mock.stream(mock, context, options), "nav-fixture-test", (_model, context, options) => mock.stream(mock, context, options));
   });
   pi.registerCommand("nav-fixture-probe", { description: "Check startup", handler: async (_args, ctx) => {
@@ -170,25 +163,12 @@ export default async function(pi) {
     await bridge.coordinator(ctx).request({ action: "move", dir: ${JSON.stringify(cwd)} });
     await session.prompt("Check return with local fake provider.");
     const returned = { id: ctx.sessionManager.getSessionId(), cwd: ctx.sessionManager.getCwd(), file: ctx.sessionManager.getSessionFile(), prompt: lastCall().systemPrompt };
-    await fs.unlink(${JSON.stringify(join(destination, ".omp", "SYSTEM.md"))});
-    await bridge.coordinator(ctx).request({ action: "move", dir: ${JSON.stringify(destination)} });
-    await session.prompt("Check destination default prompt.");
-    const defaultPrompt = lastCall().systemPrompt;
-    await bridge.coordinator(ctx).request({ action: "move", dir: ${JSON.stringify(cwd)} });
-    await session.prompt("Return before template test.");
-    await fs.writeFile(${JSON.stringify(join(destination, ".omp", "SYSTEM_TEMPLATE.md"))}, "TEMPLATE_B_UNIQUE in {{cwd}} with {{#each tools}}{{this}} {{/each}} MODEL={{model}} TREE={{includeWorkspaceTree}} SCOUT={{scoutAvailable}} IRC={{taskIrcEnabled}} QA={{autoQaEnabled}} APPEND={{appendPrompt}} PERSONALITY={{personality}} URLS={{#each internalUrls}}{{this}} {{/each}}");
-    await bridge.coordinator(ctx).request({ action: "move", dir: ${JSON.stringify(destination)} });
-    await session.prompt("Check destination template.");
-    const templatePrompt = lastCall().systemPrompt;
-    await bridge.coordinator(ctx).request({ action: "move", dir: ${JSON.stringify(cwd)} });
-    await session.prompt("Return before factory scope test.");
-    await fs.unlink(${JSON.stringify(join(destination, ".omp", "SYSTEM_TEMPLATE.md"))});
     await fs.mkdir(${JSON.stringify(join(destination, ".omp", "tools"))}, { recursive: true });
     await fs.writeFile(${JSON.stringify(join(destination, ".omp", "tools", "destination-tool.ts"))}, "export default () => ({ name: 'destination_only' });");
     await bridge.coordinator(ctx).request({ action: "move", dir: ${JSON.stringify(destination)} });
     await session.prompt("Check safe refusal with local fake provider.");
     const refused = { cwd: ctx.sessionManager.getCwd(), file: ctx.sessionManager.getSessionFile(), messages: lastCall().messages };
-    await fs.writeFile(${JSON.stringify(report)}, JSON.stringify({ matched: ref?.session?.sessionManager === ctx.sessionManager, tools: pi.getActiveTools(), before, after, returned, defaultPrompt, templatePrompt, refused, fakeCalls: mainCalls().length, childContexts: calls().filter(context => JSON.stringify(context.systemPrompt).includes("SCOPE_CHILD_B_UNIQUE")).map(context => context.systemPrompt), taskResult }));
+    await fs.writeFile(${JSON.stringify(report)}, JSON.stringify({ matched: ref?.session?.sessionManager === ctx.sessionManager, tools: pi.getActiveTools(), before, after, returned, refused, fakeCalls: mainCalls().length, childContexts: calls().filter(context => JSON.stringify(context.systemPrompt).includes("SCOPE_CHILD_B_UNIQUE")).map(context => context.systemPrompt), taskResult }));
   } });
 }`,
   );
@@ -219,7 +199,6 @@ export default async function(pi) {
     "--add-dir",
     destination,
     "--no-skills",
-    "--append-system-prompt=APPEND_MARKER",
     "--config",
     config,
   ];
@@ -256,81 +235,19 @@ export default async function(pi) {
   expect(JSON.stringify(result.after.prompt)).not.toContain("PROJECT_A_UNIQUE");
   expect(JSON.stringify(result.returned.prompt)).toContain("PROJECT_A_UNIQUE");
   expect(JSON.stringify(result.returned.prompt)).not.toContain("PROJECT_B_UNIQUE");
-  expect(JSON.stringify(result.after.prompt)).toContain("SYSTEM_B_UNIQUE");
-  expect(JSON.stringify(result.after.prompt)).not.toContain("SYSTEM_A_UNIQUE");
-  expect(JSON.stringify(result.returned.prompt)).toContain("SYSTEM_A_UNIQUE");
+  // SYSTEM.md is resolved once at omp startup; a move keeps the start project's (accepted boundary).
+  expect(JSON.stringify(result.before.prompt)).toContain("SYSTEM_A_UNIQUE");
+  expect(JSON.stringify(result.after.prompt)).toContain("SYSTEM_A_UNIQUE");
+  expect(JSON.stringify(result.after.prompt)).not.toContain("SYSTEM_B_UNIQUE");
   expect(JSON.stringify(result.after.messages)).toContain('\\"status\\":\\"applied\\"');
   expect(result.refused.cwd).toBe(destination);
   expect(result.refused.file).toBe(result.after.file);
   expect(result.tools).not.toContain("destination_only");
-  expect(JSON.stringify(result.defaultPrompt)).not.toContain("SYSTEM_A_UNIQUE");
-  expect(JSON.stringify(result.defaultPrompt)).not.toContain("SYSTEM_B_UNIQUE");
-  expect(JSON.stringify(result.defaultPrompt)).toContain("PROJECT_B_UNIQUE");
-  expect(JSON.stringify(result.templatePrompt)).toContain("TEMPLATE_B_UNIQUE");
-  expect(JSON.stringify(result.templatePrompt)).not.toContain("SYSTEM_A_UNIQUE");
-  expect(result.templatePrompt[0]).toContain("MODEL= TREE=true SCOUT=false IRC=true QA=false");
-  expect(result.templatePrompt[0]).toContain("APPEND=APPEND_MARKER");
-  expect(result.templatePrompt.slice(1).join("\n")).toContain("APPEND_MARKER");
-  expect(result.templatePrompt[0]).toContain("NATIVE_PERSONALITY_UNIQUE");
-  expect(result.templatePrompt[0]).toContain("nativefixture:// NATIVE_SCHEME_UNIQUE");
-  expect(result.fakeCalls).toBe(8);
+  expect(result.fakeCalls).toBe(4);
   expect(result.taskResult.details.results[0].exitCode).toBe(0);
   expect(result.childContexts.length).toBeGreaterThan(0);
   expect(JSON.stringify(result.childContexts[0])).toContain("PROJECT_B_UNIQUE");
   expect(JSON.stringify(result.childContexts[0])).not.toContain("PROJECT_A_UNIQUE");
-  await fs.writeFile(
-    join(destination, ".omp", "SYSTEM.md"),
-    "Destination SYSTEM_B_UNIQUE instructions.",
-  );
-  await fs.unlink(callsPath);
-  const explicit = Bun.spawn(
-    [...invocation, "--system-prompt=CLI_FIXED_UNIQUE", "/nav-fixture-probe"],
-    { cwd, env, stdout: "pipe", stderr: "pipe" },
-  );
-  const [explicitCode, explicitStderr] = await Promise.all([
-    explicit.exited,
-    new Response(explicit.stderr).text(),
-    new Response(explicit.stdout).text(),
-  ]);
-  if (explicitCode) {
-    throw new Error(`Explicit prompt configured extension fixture failed: ${explicitStderr}`);
-  }
-  const explicitResult = JSON.parse(await fs.readFile(report, "utf8"));
-  for (const prompt of [
-    explicitResult.after.prompt,
-    explicitResult.returned.prompt,
-    explicitResult.defaultPrompt,
-    explicitResult.templatePrompt,
-  ]) {
-    expect(prompt[0]).toBe("CLI_FIXED_UNIQUE");
-  }
-  await fs.unlink(join(cwd, ".omp", "SYSTEM.md"));
-  await fs.writeFile(
-    join(destination, ".omp", "SYSTEM.md"),
-    "Destination SYSTEM_B_UNIQUE instructions.",
-  );
-  await fs.unlink(callsPath);
-  const initialDefault = Bun.spawn([...invocation, "/nav-fixture-probe"], {
-    cwd,
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [defaultCode, defaultStderr] = await Promise.all([
-    initialDefault.exited,
-    new Response(initialDefault.stderr).text(),
-    new Response(initialDefault.stdout).text(),
-  ]);
-  if (defaultCode) {
-    throw new Error(`Initial default configured fixture failed: ${defaultStderr}`);
-  }
-  const initialDefaultResult = JSON.parse(await fs.readFile(report, "utf8"));
-  expect(initialDefaultResult.after.prompt[0]).toContain("SYSTEM_B_UNIQUE");
-  expect(initialDefaultResult.returned.prompt[0]).not.toContain("SYSTEM_B_UNIQUE");
-  expect(initialDefaultResult.returned.prompt[0]).not.toContain("SYSTEM_A_UNIQUE");
-  expect(initialDefaultResult.templatePrompt[0]).toContain("TEMPLATE_B_UNIQUE");
-  expect(initialDefaultResult.templatePrompt[0]).toContain("MODEL= TREE=true SCOUT=false");
-  expect(initialDefaultResult.templatePrompt[0]).toContain("APPEND_MARKER");
 }, 30_000);
 
 test("configured package extension creates managed and exact worktrees through hosted native modules", async () => {

@@ -85,6 +85,8 @@ memory backend.
   shell tools are not restricted by them.
 - After a move, the main session keeps the JS/TS extensions and custom tools it loaded at startup;
   extensions of the target project are not loaded. New subagents load the target's extensions.
+- `SYSTEM.md` / `SYSTEM_TEMPLATE.md` overrides are resolved once when omp starts; after a move the
+  session keeps the start project's override until omp is restarted.
 - Worktree busy-state is tracked within one omp process; another omp process may still use a
   worktree.
 - Pure Jujutsu workspaces are not supported by the worktree tools.
@@ -98,9 +100,8 @@ Upgrades of omp can break it even within a major version.
 - Verified: omp 18.11.0 – 18.12.2 (`SUPPORTED_OMP_VERSIONS` in [src/runtime.ts](src/runtime.ts)).
 - Other 18.x versions >= 18.11.0 load with a warning; older versions, pre-release / non-semver
   versions and the next major are rejected at startup.
-- The `omp` found on `PATH` must be the running installation (same version): Mnemopi and the
-  prompt renderer are loaded from it. A mismatch, e.g. running another install through `bunx`,
-  is rejected at startup.
+- The `omp` found on `PATH` must be the running installation (same version): Mnemopi is loaded
+  from it. A mismatch, e.g. running another install through `bunx`, is rejected at startup.
 - Restart omp after updating the extension files: subagents reuse the bridge from the first load.
 
 ## Development

@@ -106,7 +106,6 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
     if (ctx.agent.kind === "main") {
       bridge.coordinator(ctx);
       await bridge.currentSession(ctx).refreshBaseSystemPrompt();
-      await bridge.prepareProjectPrompt(bridge.currentSession(ctx));
       await memory.ensure(bridge.currentSession(ctx));
     } else {
       const api = pi as ExtensionApiLike & {
@@ -130,7 +129,6 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
       bridge.coordinator(ctx);
       await memory.ensure(bridge.currentSession(ctx));
       await bridge.notifyAfterRelocation(bridge.currentSession(ctx));
-      await bridge.refreshProjectPrompt(bridge.currentSession(ctx));
     }
   });
   pi.on("session_shutdown", (_event, ctx) => {

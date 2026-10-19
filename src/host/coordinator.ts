@@ -20,7 +20,6 @@ export const NAVIGATION_TOOLS = new Set([
 ]);
 
 interface CoordinatorDependencies {
-  beforeModelCall?(): Promise<void>;
   navigation: WorkspaceNavigation;
   relocate(cwd: string): Promise<void>;
   session: SessionLike;
@@ -78,7 +77,6 @@ export class WorkspaceCoordinator {
       this.session.agent.addBeforeModelCallHook(async (signal, context) => {
         this.#admittedToolCalls.clear();
         await this.applyPending(signal, context);
-        await this.#dependencies.beforeModelCall?.();
       }),
     );
     this.session.addDisposer(() => this.dispose());

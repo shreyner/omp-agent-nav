@@ -8,8 +8,8 @@ V1 не меняет файлы omp и не поддерживает fork ядр
 Bundled `dist/cli.js` и source-файлы, импортированные по file URL, создают разные графы модулей. Это было причиной прежнего launcher, но такой импорт обходил штатный import shim omp.
 Canonical imports через поддержанные имена `@oh-my-pi/pi-coding-agent` и subpaths получают объекты уже работающего bundle. SDK берётся из переданного `pi.pi`; неизвестный host subpath даёт отказ, а не fallback в отдельное source-состояние.
 В `package.json` `omp.extensions` указывает `src/index.ts`: штатный loader принимает файл и каталог пакета. Поставка не запускает source CLI, не передаёт внутренний runtime-root и не выбирает checkout `upstream/oh-my-pi` для выполнения. Проверки загрузки — [runtime.test.ts](../test/runtime.test.ts) и [V06](verification.md#v06).
-Отдельно разрешён короткий список library imports из того же установленного пакета для Mnemopi и renderer. Их состояния принадлежат расширению и явно связаны с host; импорт библиотеки не создаёт вторую сессию omp.
-Пакет для library imports находится по `omp` в PATH, поэтому его версия обязана совпадать с работающим хостом (`pi.pi.VERSION`). Иначе расширение отказывается загружаться: Mnemopi и renderer другой установки, например при запуске через `bunx`, тихо расходились бы с хостом.
+Отдельно разрешён короткий список library imports из того же установленного пакета для Mnemopi. Их состояния принадлежат расширению и явно связаны с host; импорт библиотеки не создаёт вторую сессию omp.
+Пакет для library imports находится по `omp` в PATH, поэтому его версия обязана совпадать с работающим хостом (`pi.pi.VERSION`). Иначе расширение отказывается загружаться: Mnemopi другой установки, например при запуске через `bunx`, тихо расходились бы с хостом.
 
 Bridge оборачивает `InteractiveMode.init`, запуск памяти и prompt только в памяти процесса. Обёртку `ExtensionRunner.createContext` (NAV-07) удалили 2026-10-19.
 Установка одна на процесс. Для каждой сессии сабагента loader omp заново импортирует граф расширения с тегом `?mtime=`, поэтому состояние внутри модуля прежнюю установку не видит. Отсюда следствие: после обновления файлов расширения omp нужно перезапустить, иначе новые графы сабагентов работают с bridge первой загрузки. Обещание установки хранится под ключом `Symbol.for` на объекте хоста, общем для всех графов: `ExtensionRunner.prototype` для bridge, `AgentSession.prototype` для памяти. Запись идёт через `??=` без `await` между чтением и записью, так что параллельные загрузки сабагентов получают тот же bridge. До 2026-10-19 защита была модульной, и каждый `task` наслаивал обёртки, coordinator и записи ledger. Проверка — [install-guard.test.ts](../test/install-guard.test.ts).
@@ -41,19 +41,11 @@ Move/enter/exit используют [WorkspaceBridge.relocate](../src/host.ts) 
 1. Сохранить состояние сессии, завершить записи памяти и flush хранилища сессии.
 2. Через штатный move перенести JSONL и cwd, сохраняя session ID и историю.
 3. Перезагрузить настройки и ресурсы цели: TUI использует своего владельца, headless — общие helpers. Перевязать память и проектные MCP, обновить skills/commands и базовый prompt.
-4. Обновить проектный SYSTEM prefix и task/artifact anchor, синхронизировать разрешения и отображение TUI.
+4. Обновить task/artifact anchor, синхронизировать разрешения и отображение TUI.
 5. При ошибке выполнить native rollbackMove и повторно подготовить исходный контекст. Ошибка восстановления блокирует следующий запрос модели. Сбой MCP исходного проекта при восстановлении фатальным не считается, как и в нативном старте: поднявшиеся инструменты публикуются, а сбой попадает в итог операции (`restored to <A> (partially: MCP startup failed …)`). Память при восстановлении строгая: gate памяти этого вызова модели уже пройден до перехода, так что без неё прогон продолжился бы без обязательной памяти. Поэтому её сбой даёт `WorkspaceRollbackError` и останавливает прогон, а следующий prompt повторяет старт памяти. Строгость прямого перехода не меняется.
 
-Проектный SYSTEM override, автоматически обнаруженный при старте, обновляется для `.omp/SYSTEM.md`, шаблона или стандартного prompt цели.
-Явные CLI system-prompt/template и намеренное изменение prefix другим расширением сохраняются.
-Это необходимо потому, что штатный refreshBaseSystemPrompt сам по себе сохраняет автоматически обнаруженный prefix запуска.
-
-Renderer `system-prompt.ts` импортируется как библиотека установленного пакета; он не является чистой функцией. Bridge передаёт обнаруженные host context/rules, native snapshots skills, metadata активных tools/MCP/xdev, модель, workspace tree и штатные policy/settings.
-Library InternalUrlRouter перенаправляется к live native registry, чтобы prompt сохранил зарегистрированные схемы. Готовые renderedSkills передаются без повторного чтения через отдельный source registry.
-Перед чтением PERSONALITY.md проверяется совпадение profile agentDir библиотеки и host. Флаги model/tree/scout/IRC/QA/security и настройки отображения берутся из native handles.
-Заменяется только собственный автоматически обнаруженный первый prefix; остальные prompt frames, memory recall и явные CLI/extension overrides сохраняются.
-Явный CLI append разрешается штатным `resolvePromptInput` один раз и передаётся renderer как `resolvedAppendSystemPrompt`, поэтому `{{appendPrompt}}` проектного шаблона получает его текст.
-Генераторы memory/MCP append не вызываются повторно для переменной prefix: их актуальные блоки уже принадлежат штатному завершающему frame. Этот frame сохраняется вместе с CLI append, без повторного генерирования или переноса в первый prefix.
+Prompt после переезда собирает штатный `refreshBaseSystemPrompt`: он берёт AGENTS/context/rules, skills и tools цели, но custom prompt — тот, что `main.ts` нашёл при запуске ([граница SYSTEM.md](behavior.md#system-md)).
+Собственный клон рендерера (`system-prompt.ts` как библиотека, около 400 строк в bridge) перерисовывал этот prefix на каждом вызове модели. Его удалили 2026-10-19. Он расходился с хостом на каждой версии: в 18.12.2 удалён `directToolNames`, появился `getAdvertisedEvalPreludes`. Вместе с ним ушли hosted-ключи `cli/args`, `capability/system-prompt`, `task/spawn-policy`, `task/prompt-policy`, `irc/messaging`, `tools/report-tool-issue`, `tools/xdev`, `internal-urls/router`, `utils/active-repo-context` и library-импорты `system-prompt.ts`, `internal-urls/router.ts`, `@oh-my-pi/pi-utils`.
 
 JS/TS extensions/custom tools основной сессии сохраняются. Bridge не выгружает фабрики A и не загружает фабрики B при переезде — принятый [TD-01](tech-debt.md#td-01) и следующий этап [F7](future-features.md#f7).
 У нового сабагента фабрики загружаются по цели.

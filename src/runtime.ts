@@ -117,8 +117,6 @@ const hostedModules: Record<string, () => Promise<unknown>> = {
   "config/settings.ts": () => import("@oh-my-pi/pi-coding-agent/config/settings"),
   "capability/index.ts": () => import("@oh-my-pi/pi-coding-agent/capability"),
   "capability/context-file.ts": () => import("@oh-my-pi/pi-coding-agent/capability/context-file"),
-  "capability/system-prompt.ts": () => import("@oh-my-pi/pi-coding-agent/capability/system-prompt"),
-  "cli/args.ts": () => import("@oh-my-pi/pi-coding-agent/cli/args"),
   "discovery/helpers.ts": () => import("@oh-my-pi/pi-coding-agent/discovery/helpers"),
   "extensibility/settings.ts": () => import("@oh-my-pi/pi-coding-agent/extensibility/settings"),
   "hindsight/backend.ts": () => import("@oh-my-pi/pi-coding-agent/hindsight/backend"),
@@ -130,14 +128,6 @@ const hostedModules: Record<string, () => Promise<unknown>> = {
   "task/types.ts": () => import("@oh-my-pi/pi-coding-agent/task/types"),
   "task/parallel.ts": () => import("@oh-my-pi/pi-coding-agent/task/parallel"),
   "task/structured-subagent.ts": () => import("@oh-my-pi/pi-coding-agent/task/structured-subagent"),
-  "task/spawn-policy.ts": () => import("@oh-my-pi/pi-coding-agent/task/spawn-policy"),
-  "task/prompt-policy.ts": () => import("@oh-my-pi/pi-coding-agent/task/prompt-policy"),
-  "irc/messaging.ts": () => import("@oh-my-pi/pi-coding-agent/irc/messaging"),
-  "tools/report-tool-issue.ts": () => import("@oh-my-pi/pi-coding-agent/tools/report-tool-issue"),
-  "tools/xdev.ts": () => import("@oh-my-pi/pi-coding-agent/tools/xdev"),
-  "internal-urls/router.ts": () => import("@oh-my-pi/pi-coding-agent/internal-urls/router"),
-  "utils/active-repo-context.ts": () =>
-    import("@oh-my-pi/pi-coding-agent/utils/active-repo-context"),
   "task/worktree.ts": () => import("@oh-my-pi/pi-coding-agent/task/worktree"),
   "tools/gh-pr-checkout.ts": () => import("@oh-my-pi/pi-coding-agent/tools/gh-pr-checkout"),
   "@oh-my-pi/pi-utils": () => import("@oh-my-pi/pi-utils"),
@@ -147,7 +137,7 @@ const hostedModules: Record<string, () => Promise<unknown>> = {
 };
 
 /**
- * Mnemopi and the prompt renderer are imported as libraries from the omp on PATH; it must be the
+ * Mnemopi is imported as a library from the omp on PATH; it must be the
  * running omp, not another installation (bunx, a second global install) that happens to be first.
  */
 function hostPackageRoot(host: HostNamespace): string {
@@ -165,7 +155,7 @@ function hostPackageRoot(host: HostNamespace): string {
   const installed = readPackage(packageRoot).version;
   if (installed !== hostVersion) {
     throw new Error(
-      `omp-agent-nav loads Mnemopi and the prompt renderer from the omp on PATH (${installed ?? "unknown"} at ${packageRoot}), which differs from the running omp ${hostVersion}. Put the running installation first on PATH.`,
+      `omp-agent-nav loads Mnemopi from the omp on PATH (${installed ?? "unknown"} at ${packageRoot}), which differs from the running omp ${hostVersion}. Put the running installation first on PATH.`,
     );
   }
   return packageRoot;
@@ -210,9 +200,6 @@ export function createRuntime(host: HostNamespace, sourceTestRoot?: string): Run
           "mnemopi/state.ts",
           "mnemopi/config.ts",
           "mnemopi/embed-client.ts",
-          "system-prompt.ts",
-          "internal-urls/router.ts",
-          "@oh-my-pi/pi-utils",
         ].includes(specifier)
       ) {
         throw new Error(`Unsupported extension-owned omp library: ${specifier}.`);
