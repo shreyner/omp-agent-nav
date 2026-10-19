@@ -106,7 +106,7 @@ export function assertInstalledOmp(packageRoot: string): string {
 
 // Literal imports are rewritten by omp's loader into its bundled module registry.
 // Computed paths or file URLs would create a second graph with different session state.
-const hostedModules: Record<string, () => Promise<unknown>> = {
+export const hostedModules: Readonly<Record<string, () => Promise<unknown>>> = {
   "registry/agent-registry.ts": () => import("@oh-my-pi/pi-coding-agent/registry/agent-registry"),
   "session/agent-session.ts": () => import("@oh-my-pi/pi-coding-agent/session/agent-session"),
   "session/artifacts.ts": () => import("@oh-my-pi/pi-coding-agent/session/artifacts"),
@@ -130,7 +130,7 @@ const hostedModules: Record<string, () => Promise<unknown>> = {
   "@oh-my-pi/pi-utils": () => import("@oh-my-pi/pi-utils"),
   "@oh-my-pi/pi-utils/dirs": () => import("@oh-my-pi/pi-utils"),
   "@oh-my-pi/pi-natives/vcs": () => import("@oh-my-pi/pi-natives/vcs"),
-  "@oh-my-pi/omptype/typebox": () => import("@sinclair/typebox"),
+  "@oh-my-pi/pi-tui/tools/task": () => import("@oh-my-pi/pi-tui/tools/task"),
 };
 
 /**

@@ -7,6 +7,7 @@ import {
   assertInstalledOmp,
   createRuntime,
   findInstalledOmp,
+  hostedModules,
   SUPPORTED_OMP_VERSIONS,
 } from "../src/runtime";
 import { type HostNamespace } from "../src/types";
@@ -28,6 +29,25 @@ test("discovers the installed npm package and imports its native/source modules 
   expect(typeof registry.AgentRegistry.global).toBe("function");
   expect(typeof vcs.git).toBe("function");
   expect(runtime.mode).toBe("source-test");
+});
+
+// A hosted specifier missing from the bundle's module registry does not fail: the shim falls back
+// to source and silently creates a second graph. Pin every specifier to the installed bundle.
+test("every hosted module specifier is in the installed omp bundle's module registry", async () => {
+  const bundle = await Bun.file(join(findInstalledOmp(), "dist", "cli.js")).text();
+  const head = /[A-Za-z_$][\w$]*=\{"@oh-my-pi\/pi-agent-core":[\w$]+,/.exec(bundle);
+  expect(head).not.toBeNull();
+  const start = bundle.indexOf("{", head!.index);
+  const registry = new Set(
+    [...bundle.slice(start, bundle.indexOf("}", start)).matchAll(/"(@oh-my-pi\/[^"]+)":/g)].map(
+      (match) => match[1],
+    ),
+  );
+  const specifiers = Object.values(hostedModules).map(
+    (load) => /import\("([^"]+)"\)/.exec(String(load))?.[1],
+  );
+  expect(specifiers.length).toBeGreaterThan(0);
+  expect(specifiers.filter((specifier) => !specifier || !registry.has(specifier))).toEqual([]);
 });
 
 test("accepts verified and newer same-major hosts, rejects older, next-major and non-semver", async () => {

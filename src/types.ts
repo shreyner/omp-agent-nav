@@ -139,8 +139,12 @@ export interface ToolDefinitionLike {
   formatApprovalDetails?: (args: unknown) => string | string[] | undefined;
   label: string;
   loadMode?: "essential" | "discoverable";
+  /** Not in the host's ToolDefinition type; the tool proxy forwards it to the TUI. */
+  mergeCallAndResult?: boolean;
   name: string;
   parameters: unknown;
+  renderCall?: (args: unknown, options: unknown, theme: unknown) => unknown;
+  renderResult?: (result: unknown, options: unknown, theme: unknown, args?: unknown) => unknown;
 }
 
 export interface ExtensionApiLike {
@@ -160,5 +164,6 @@ export interface ExtensionApiLike {
     },
   ): void;
   registerTool(tool: ToolDefinitionLike): void;
+  typebox: { Type: unknown };
   [key: string]: unknown;
 }

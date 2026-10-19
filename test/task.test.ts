@@ -918,6 +918,25 @@ describe("native task destination scope", () => {
     expect(single.toJsonSchema().properties.tasks).toBeUndefined();
   }, 30000);
 
+  test("the wrapper keeps the native renderer and shows each destination in approval details", async () => {
+    const f = await fixture();
+    expect(f.tool.mergeCallAndResult).toBe(true);
+    expect(typeof f.tool.renderCall).toBe("function");
+    expect(typeof f.tool.renderResult).toBe("function");
+    const details = f.tool.formatApprovalDetails?.({
+      context: "Shared",
+      cwd: f.b,
+      tasks: [
+        { name: "one", cwd: f.b, agent: "target", task: "B" },
+        { cwd: f.c, agent: "target", task: "C" },
+      ],
+    }) as string[];
+    expect(details.some((line) => line.startsWith("Context:"))).toBe(true); // Native lines stay.
+    expect(details).toContain(`Cwd: ${f.b}`);
+    expect(details).toContain(`Cwd (one): ${f.b}`);
+    expect(details).toContain(`Cwd (#2): ${f.c}`);
+  }, 30000);
+
   test("native session_switch creates a new main anchor without retargeting the old B child", async () => {
     const f = await fixture(true);
     await f.session.prompt("persist first parent");

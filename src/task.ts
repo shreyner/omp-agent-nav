@@ -175,6 +175,7 @@ interface NativeTask {
     signal?: AbortSignal,
     onUpdate?: (result: TaskResult) => void,
   ): Promise<TaskResult>;
+  formatApprovalDetails?(args: unknown): string[];
   parameters: Schema;
   session: NativeTaskSession;
 }
@@ -200,6 +201,7 @@ interface TaskGate {
 }
 interface TaskToolFactory {
   create(session: NativeTaskSession): Promise<NativeTask>;
+  prototype: { renderCall(args: unknown, options: unknown, theme: unknown): unknown };
 }
 /** Shared budget for target-MCP startup readiness; mutable for tests. */
 export const mcpStartupWait = { ms: 30_000 };
@@ -416,24 +418,42 @@ export async function prepareTaskScope(
   return scoped;
 }
 
+/** Approval lines for the destinations the native task details do not show. */
+function taskCwdLines(args: unknown): string[] {
+  const params = args as { cwd?: unknown; tasks?: unknown } | null | undefined;
+  const lines = typeof params?.cwd === "string" ? [`Cwd: ${params.cwd}`] : [];
+  const items: unknown[] = Array.isArray(params?.tasks) ? params.tasks : [];
+  for (const [index, item] of items.entries()) {
+    const { cwd, name } = (item ?? {}) as { cwd?: unknown; name?: unknown };
+    if (typeof cwd === "string") {
+      lines.push(`Cwd (${typeof name === "string" ? name : `#${index + 1}`}): ${cwd}`);
+    }
+  }
+  return lines;
+}
+
 export async function installTaskTool(
   pi: ExtensionApiLike,
   runtime: RuntimeModules,
   bridge: WorkspaceBridge,
 ): Promise<void> {
-  const [{ TaskTool }, { getTaskSchema }, registry, policy, { Semaphore }] = await Promise.all([
-    runtime.importModule<{ TaskTool: TaskToolFactory }>("task/index.ts"),
-    runtime.importModule<{ getTaskSchema(options: Record<string, unknown>): Schema }>(
-      "task/types.ts",
-    ),
-    runtime.importModule<SettingRegistry>("config/registry.ts"),
-    runtime.importModule<{
-      resolveEffectiveSubagentPolicy(
-        request: Record<string, unknown>,
-      ): Promise<{ effectiveAgent: { blocking?: boolean } }>;
-    }>("task/structured-subagent.ts"),
-    runtime.importModule<{ Semaphore: new (limit: number) => TaskGate }>("task/parallel.ts"),
-  ]);
+  const [{ TaskTool }, { getTaskSchema }, registry, policy, { Semaphore }, renderer] =
+    await Promise.all([
+      runtime.importModule<{ TaskTool: TaskToolFactory }>("task/index.ts"),
+      runtime.importModule<{ getTaskSchema(options: Record<string, unknown>): Schema }>(
+        "task/types.ts",
+      ),
+      runtime.importModule<SettingRegistry>("config/registry.ts"),
+      runtime.importModule<{
+        resolveEffectiveSubagentPolicy(
+          request: Record<string, unknown>,
+        ): Promise<{ effectiveAgent: { blocking?: boolean } }>;
+      }>("task/structured-subagent.ts"),
+      runtime.importModule<{ Semaphore: new (limit: number) => TaskGate }>("task/parallel.ts"),
+      runtime.importModule<{
+        renderResult(result: unknown, options: unknown, theme: unknown, args?: unknown): unknown;
+      }>("@oh-my-pi/pi-tui/tools/task"),
+    ]);
   const gates = new WeakMap<SessionLike, TaskGate>();
   const schemaOptions = {
     isolationEnabled: true,
@@ -468,6 +488,16 @@ export async function installTaskTool(
     name: "task",
     label: "Task",
     approval: "exec",
+    // Replacing the native tool drops its renderer; reuse it. Native speculation is not reused:
+    // it would launch children on the parent's session before cwd is validated (TASK-02).
+    renderCall: (args, options, theme) => TaskTool.prototype.renderCall(args, options, theme),
+    renderResult: (result, options, theme, args) =>
+      renderer.renderResult(result, options, theme, args),
+    mergeCallAndResult: true,
+    formatApprovalDetails: (args) => [
+      ...(advertisedTask?.formatApprovalDetails?.(args) ?? []),
+      ...taskCwdLines(args),
+    ],
     get description() {
       if (advertisedKind === "sub") {
         // session_start may have failed or timed out before the native tool was created.

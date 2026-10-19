@@ -147,6 +147,7 @@ TUI/RPC подтвердили отсутствие AGENTS чужого разр
 Print, TUI и RPC запускаются обычным установленным `omp` с extension из временной конфигурации. Реальный TUI работает в PTY, RPC — дочерний процесс со штатным JSON protocol; fake provider выполняет зарегистрированные tools.
 Конфигурационная загрузка файла и каталога пакета прошла; TUI/RPC context/BTW/LSP и сохранённый заголовок JSONL подтвердили единый контракт. Несовместимая версия отклоняется; runtime не требует `src/cli.ts` и не запускает его.
 2026-10-19 (EXT-16): хост, чья версия отличается от omp в PATH, отклоняется сообщением «differs from the running omp» — [runtime.test.ts](../test/runtime.test.ts).
+2026-10-19 (EXT-01/EXT-14): каждый specifier `hostedModules` присутствует в реестре модулей `dist/cli.js` установленного omp — [runtime.test.ts](../test/runtime.test.ts); разовая сверка: 24/24 на 18.11.0 и 18.12.2.
 
 <a id="v07"></a>
 ### V07. List/enter/exit
@@ -188,6 +189,7 @@ Descendant clone=false/keepChanges=false, exact local exclude не меняет 
 Без cwd фиксируется исходный каталог; элементы пакета независимы. Ошибка policy цели не запускает провайдер других элементов.
 2026-10-19: два task подряд в B запускают сервер MCP цели один раз (pid не меняется), и неудачный preflight третьего вызова его не закрывает (CR-4; прежний код поднимал второй процесс). Поля seance доходят до preflight цели: отсутствующий источник даёт ошибку поиска, источник без модели — «no saved model», провайдер не вызывается (EXT-02; на хостах без seance тест пропускается). Сабагент без отработавшего `session_start` выполняет обычный native task (EXT-03).
 Проверены сохранение штатной single/batch схемы, общий лимит async jobs и суммарный progress; description/schema обновляются после move.
+2026-10-19: обёртка отдаёт штатные `renderCall`/`renderResult` и `mergeCallAndResult: true`. Approval-детали сохраняют штатные строки (`Context:`) и добавляют `Cwd`, `Cwd (<name>)` и `Cwd (#n)` для каждого назначения — [task.test.ts](../test/task.test.ts). Граница: отрисовка в живом TUI не проверялась, тест проверяет только наличие делегирующих функций.
 Bundled proof использует реальные model toolCalls зарегистрированного task: single B и batch A/B/worktree B завершились успешно. Перед первым запросом каждый ребёнок имел нужные model/settings/AGENTS/agents/skills/MCP, пустые inherited roots и отдельные memory state/соединение; worktree B разделял банк B.
 `task.test.ts` использует source-test runtime и отдельный configured task fixture для штатных классов. Его результаты не выдаются за запуск полного расширения через bundled CLI.
 
