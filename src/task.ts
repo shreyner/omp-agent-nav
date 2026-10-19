@@ -1,5 +1,5 @@
 import * as fs from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { type WorkspaceBridge } from "./host";
 import { type MemoryBridge } from "./memory";
@@ -61,16 +61,17 @@ async function applyTaskAnchor(runtime: RuntimeModules, parent: SessionLike): Pr
   }
   let anchor = anchors.get(parent);
   if (!anchor || anchor.sessionId !== parent.sessionId) {
-    const file = join(
-      dirname(manager.getSessionDir()),
-      ".omp-agent-nav",
-      `${parent.sessionId}.jsonl`,
-    );
+    // Session listings scan `*.jsonl` directly inside each top-level directory of the sessions
+    // root and follow symlinks (omp >= 18.11.3); one level deeper the anchor stays out of
+    // /resume, recent-projects and gc. The `X.jsonl` + `X/` pair is what the host expects.
+    const sessionsRoot = dirname(manager.getSessionDir());
+    const file = join(sessionsRoot, "omp-agent-nav", "anchors", `${parent.sessionId}.jsonl`);
     const artifacts = file.slice(0, -6);
     const { ArtifactManager } = await runtime.importModule<{
       ArtifactManager: new (directory: string) => unknown;
     }>("session/artifacts.ts");
     await fs.mkdir(dirname(file), { recursive: true });
+    await adoptLegacyAnchor(sessionsRoot, parent.sessionId, actualFile, artifacts);
     const previousArtifacts = manager.getArtifactsDir();
     const anchorExists = await fs.stat(artifacts).then(
       () => true,
@@ -103,12 +104,7 @@ async function applyTaskAnchor(runtime: RuntimeModules, parent: SessionLike): Pr
     native.getArtifactManager = () => anchor!.manager;
   }
   manager.adoptArtifactManager(anchor.manager);
-  const next = `${anchor.file}.next-${process.pid}`;
-  await fs.symlink(actualFile, next);
-  await fs.rename(next, anchor.file).catch(async (error) => {
-    await fs.unlink(next).catch(() => {});
-    throw error;
-  });
+  await pointAnchorAt(anchor.file, actualFile);
   const ref = runtime.host.AgentRegistry.global()
     .list()
     .find((value) => value.session === parent);
@@ -116,6 +112,48 @@ async function applyTaskAnchor(runtime: RuntimeModules, parent: SessionLike): Pr
     (ref as typeof ref & { sessionFile: string }).sessionFile = anchor.file;
   }
 }
+/** Atomically re-point the anchor at the real transcript, never at itself. */
+async function pointAnchorAt(anchorFile: string, actualFile: string): Promise<void> {
+  // A session reopened through the anchor path reports the link as its file; linking that path
+  // to itself made every later append fail with ELOOP.
+  const target = await fs.realpath(actualFile);
+  if (target === anchorFile) {
+    return;
+  }
+  const next = `${anchorFile}.next-${process.pid}`;
+  await fs.symlink(target, next);
+  await fs.rename(next, anchorFile).catch(async (error) => {
+    await fs.unlink(next).catch(() => {});
+    throw error;
+  });
+}
+
+/**
+ * Before 2026-10-19 anchors lived in `<sessions>/.omp-agent-nav/`, a directory the listings scan.
+ * Move this session's pair lazily; other sessions keep theirs until they run a task again.
+ */
+async function adoptLegacyAnchor(
+  sessionsRoot: string,
+  sessionId: string,
+  actualFile: string,
+  artifacts: string,
+): Promise<void> {
+  const legacy = join(sessionsRoot, ".omp-agent-nav", sessionId);
+  await fs.rename(legacy, artifacts).catch((error) => {
+    if (!["ENOENT", "EEXIST", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? "")) {
+      throw error;
+    }
+  });
+  // A session opened through the old link must keep it, or the host's next rewrite forks the file.
+  if (resolve(actualFile) !== `${legacy}.jsonl`) {
+    await fs.unlink(`${legacy}.jsonl`).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    });
+  }
+}
+
 interface Schema {
   array(): Schema;
   exclude(value: string): Schema;

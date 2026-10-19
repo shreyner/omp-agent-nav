@@ -306,6 +306,14 @@ createInterface({input:process.stdin}).on("line",line=>{
   return pidFile;
 }
 
+/** Paths the host's /resume-all listing shows (follows transcript symlinks since 18.11.3). */
+async function listedSessionPaths(sessionsRoot: string): Promise<string[]> {
+  const { listAllSessions } = await runtime.importModule<{
+    listAllSessions(storage: undefined, root: string): Promise<Array<{ path: string }>>;
+  }>("session/session-listing.ts");
+  return (await listAllSessions(undefined, sessionsRoot)).map((session) => session.path);
+}
+
 async function expectServerClosed(pidFile: string) {
   // Real process lifecycle: the server is spawned by code under test (no child handle); with a tiny
   // startup budget it may be killed before writing its pid file — await both events by polling.
@@ -487,6 +495,36 @@ describe("native task destination scope", () => {
     expect(await fs.readFile(childRef!.sessionFile!, "utf8")).toContain(
       "continue after parent move",
     );
+    expect(anchor).toContain(join("sessions", "omp-agent-nav", "anchors"));
+    expect(await listedSessionPaths(join(f.root, "sessions"))).not.toContain(anchor);
+  }, 30000);
+
+  test("anchors stay out of session listings and never link to themselves (EXT-05)", async () => {
+    const f = await fixture(true);
+    await f.session.prompt("persist main");
+    const manager = f.session.sessionManager as unknown as {
+      getSessionFile(): string;
+      setSessionFile(file: string): Promise<void>;
+    };
+    const actual = manager.getSessionFile();
+    const sessionsRoot = join(f.root, "sessions");
+    // A pair left by the previous layout is adopted lazily for this session.
+    const legacy = join(sessionsRoot, ".omp-agent-nav", f.session.sessionId);
+    await fs.mkdir(legacy, { recursive: true });
+    await fs.writeFile(join(legacy, "old-child.jsonl"), "{}\n");
+    await fs.symlink(actual, `${legacy}.jsonl`);
+    await syncTaskAnchor(runtime, f.session);
+    const anchor = (findNativeToolSession(f.session).getSessionFile as () => string)();
+    expect(await fs.readFile(join(anchor.slice(0, -6), "old-child.jsonl"), "utf8")).toBe("{}\n");
+    expect(await fs.lstat(`${legacy}.jsonl`).catch((error) => error.code)).toBe("ENOENT");
+    const listed = await listedSessionPaths(sessionsRoot);
+    expect(listed).toContain(actual);
+    expect(listed.some((path) => path.includes("omp-agent-nav"))).toBe(false);
+    // Reopening through the anchor path must keep it pointing at the real transcript.
+    await manager.setSessionFile(anchor);
+    await syncTaskAnchor(runtime, f.session);
+    expect(await fs.realpath(anchor)).toBe(await fs.realpath(actual));
+    await fs.appendFile(anchor, "");
   }, 30000);
 
   test("native isolation starts from target B and keeps B's bank", async () => {
@@ -970,7 +1008,7 @@ describe("native task destination scope", () => {
         .some((ref) => ref.kind === "sub"),
     ).toBe(false);
     expect(
-      await fs.access(join(f.root, "sessions", ".omp-agent-nav")).then(
+      await fs.access(join(f.root, "sessions", "omp-agent-nav")).then(
         () => true,
         () => false,
       ),

@@ -193,6 +193,7 @@ Bundled proof использует реальные model toolCalls зареги
 **TASK-03.** [task.test.ts](../test/task.test.ts), [bundled-task.test.ts](../test/bundled-task.test.ts).
 Работающий B пишет журнал после переезда основной сессии A → C. Стабильный artifact anchor следует за переносом JSONL родителя.
 Новый SID родителя получает новый anchor; прежние сабагенты B сохраняют журнал и банк. Штатный park/revive продолжает B и пишет в прежний файл.
+2026-10-19 (EXT-05): якорь лежит в `omp-agent-nav/anchors/` и отсутствует в `listAllSessions` хоста, где реальный транскрипт есть; старая пара `.omp-agent-nav/<SID>` переносится, журнал ребёнка сохраняется; после `setSessionFile(<якорь>)` повторная синхронизация оставляет ссылку на реальный файл, append проходит. На прежнем коде оба теста падали.
 В обычном bundled omp B удерживался внутри fake provider, пока main A → C менял каталог и банк. После освобождения B завершил запись в прежний JSONL; native park/revive сохранил его SID/cwd/file/bank/model и следующую запись без инструкций C.
 
 <a id="v13"></a>
