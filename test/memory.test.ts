@@ -209,6 +209,11 @@ describe("native Mnemopi scope and owned lifetime", () => {
     const child = await session(dir, join(block, "mnemopi.db"), "sub");
     await expect(memory.ensure(child)).rejects.toThrow("Mnemopi startup failed");
     expect(memory.getState(child)).toBeUndefined();
+    // A stored failure is not final: once the cause is gone the next gate starts memory (CR-6).
+    await fs.rm(block);
+    await fs.mkdir(block);
+    await memory.ensure(child);
+    expect(memory.getState(child)).toBeDefined();
   });
 
   test("clear protects shared live handles and adopts its replacement state in the source harness", async () => {

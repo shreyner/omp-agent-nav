@@ -742,7 +742,7 @@ export class WorkspaceBridge {
     } catch (error) {
       try {
         await session.sessionManager.rollbackMove(previous);
-        await this.#rescope(session, previous.cwd);
+        await this.#rescope(session, previous.cwd, false);
         await this.#grantStates.get(session.sessionManager)?.synchronize();
         await session.refreshBaseSystemPrompt();
         await this.refreshProjectPrompt(session);
@@ -758,16 +758,33 @@ export class WorkspaceBridge {
     }
   }
 
-  async #rescope(session: SessionLike, cwd: string): Promise<void> {
+  /**
+   * Memory and project MCP of `cwd`. When restoring the previous project after a failed move
+   * (`strict: false`) their failures are logged instead of stopping the run: native startup
+   * tolerates flaky MCP servers too, and the memory gate still blocks the next model request
+   * while mandatory memory is down.
+   */
+  async #rescopeResources(session: SessionLike, cwd: string, strict: boolean): Promise<void> {
+    try {
+      await this.#memory?.ensure(session, cwd);
+    } catch (error) {
+      if (strict) {
+        throw error;
+      }
+      process.stderr.write(`omp-agent-nav: restoring memory for ${cwd} failed: ${String(error)}\n`);
+    }
+    if (typeof (session as Partial<RescopableSession>).getToolByName === "function") {
+      await rescopeProjectMcp(this.runtime, session, cwd, strict);
+    }
+  }
+
+  async #rescope(session: SessionLike, cwd: string, strict = true): Promise<void> {
     const owner = this.owner(session);
     if (owner) {
       if (!(await owner.applyCwdChange(cwd))) {
         throw new Error(`The TUI could not prepare workspace ${cwd}.`);
       }
-      await this.#memory?.ensure(session, cwd);
-      if (typeof (session as Partial<RescopableSession>).getToolByName === "function") {
-        await rescopeProjectMcp(this.runtime, session, cwd);
-      }
+      await this.#rescopeResources(session, cwd, strict);
       await session.refreshSkillsAndCommands();
       owner.updateEditorBorderColor();
       await owner.reloadTodos();
@@ -785,11 +802,8 @@ export class WorkspaceBridge {
       dirs.setProjectDir(cwd);
       await session.settings.reloadForCwd(cwd);
       await backend.rebindMemoryBackendForCwd(session);
-      await this.#memory?.ensure(session, cwd);
       discovery.clearClaudePluginRootsCache();
-      if (typeof (session as Partial<RescopableSession>).getToolByName === "function") {
-        await rescopeProjectMcp(this.runtime, session, cwd);
-      }
+      await this.#rescopeResources(session, cwd, strict);
       await session.refreshSkillsAndCommands();
     }
   }

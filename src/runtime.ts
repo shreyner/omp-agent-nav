@@ -79,7 +79,8 @@ export function findInstalledOmp(executable = Bun.which("omp")): string {
   );
 }
 
-export function assertInstalledOmp(packageRoot: string): void {
+/** Returns the accepted package version. */
+export function assertInstalledOmp(packageRoot: string): string {
   const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as {
     name?: string;
     version?: string;
@@ -93,6 +94,7 @@ export function assertInstalledOmp(packageRoot: string): void {
   if (status === "unverified") {
     warnUnverifiedHost(manifest.version ?? "");
   }
+  return manifest.version ?? "";
 }
 
 // Literal imports are rewritten by omp's loader into its bundled module registry.
@@ -141,7 +143,7 @@ const hostedModules: Record<string, () => Promise<unknown>> = {
 
 export function createRuntime(host: HostNamespace, sourceTestRoot?: string): RuntimeModules {
   const packageRoot = sourceTestRoot ?? findInstalledOmp();
-  assertInstalledOmp(packageRoot);
+  const installedVersion = assertInstalledOmp(packageRoot);
   if (!sourceTestRoot) {
     const hostStatus = versionStatus(String(host.VERSION));
     if (hostStatus === "rejected") {
@@ -151,6 +153,13 @@ export function createRuntime(host: HostNamespace, sourceTestRoot?: string): Run
     }
     if (hostStatus === "unverified") {
       warnUnverifiedHost(String(host.VERSION));
+    }
+    // Mnemopi and the prompt renderer are imported as libraries from this package; they must
+    // be the code of the running omp, not of another installation that happens to be on PATH.
+    if (installedVersion !== String(host.VERSION)) {
+      throw new Error(
+        `omp-agent-nav loads Mnemopi and the prompt renderer from the omp on PATH (${installedVersion} at ${packageRoot}), which differs from the running omp ${String(host.VERSION)}. Put the running installation first on PATH.`,
+      );
     }
   }
   const libraryImport = async <T>(specifier: string): Promise<T> => {

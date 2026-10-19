@@ -385,10 +385,9 @@ async function createMemoryBridge(runtime: RuntimeModules): Promise<MemoryBridge
       if (running) {
         await running;
       }
-      const error = failures.get(session);
-      if (error) {
-        throw error;
-      }
+      // A recorded startup failure blocks this request only after a fresh attempt also fails;
+      // otherwise one transient error (a busy database) would block the session for good.
+      failures.delete(session);
       const identity = await resolveProjectIdentity(
         runtime,
         sourceCwd ?? session.settings.getCwd(),

@@ -42,6 +42,7 @@ export class WorkspaceCoordinator {
     detachAbort?: () => void;
   };
   #applying = false;
+  #validating = false;
   #disposed = false;
   #removers: Array<() => void> = [];
   #admittedToolCalls = new Set<string>();
@@ -95,7 +96,7 @@ export class WorkspaceCoordinator {
     if (this.#disposed) {
       throw new Error("The navigation session is closed.");
     }
-    if (this.#pending || this.#applying) {
+    if (this.#pending || this.#applying || this.#validating) {
       throw new Error("Another workspace operation is pending.");
     }
     if (this.session.isCompacting) {
@@ -104,29 +105,13 @@ export class WorkspaceCoordinator {
     signal?.throwIfAborted();
     const sourceCwd = this.session.sessionManager.getCwd();
     const sourceId = this.session.sessionManager.getSessionId();
+    // Hold the single slot across validation: a concurrent request must not pass the check too.
+    this.#validating = true;
     let target: string | undefined;
-    switch (request.action) {
-      case "move":
-        target = await this.navigation.validateMove(request.dir);
-        break;
-      case "enter":
-        target = await this.navigation.validateEnter(request.path);
-        break;
-      case "exit":
-        target = await this.navigation.validateExit();
-        break;
-      case "create":
-        if (!request.branch.trim()) {
-          throw new Error("A non-empty worktree branch is required.");
-        }
-        break;
-      case "remove":
-        if (!request.path.trim()) {
-          throw new Error("A worktree path is required.");
-        }
-        break;
-      default:
-        throw new Error("Unknown workspace operation.");
+    try {
+      target = await this.#validateRequest(request);
+    } finally {
+      this.#validating = false;
     }
     signal?.throwIfAborted();
     if (
@@ -156,6 +141,29 @@ export class WorkspaceCoordinator {
       detachAbort: () => signal?.removeEventListener("abort", abort),
     };
     return result;
+  }
+
+  async #validateRequest(request: WorkspaceRequest): Promise<string | undefined> {
+    switch (request.action) {
+      case "move":
+        return await this.navigation.validateMove(request.dir);
+      case "enter":
+        return await this.navigation.validateEnter(request.path);
+      case "exit":
+        return await this.navigation.validateExit();
+      case "create":
+        if (!request.branch.trim()) {
+          throw new Error("A non-empty worktree branch is required.");
+        }
+        return undefined;
+      case "remove":
+        if (!request.path.trim()) {
+          throw new Error("A worktree path is required.");
+        }
+        return undefined;
+      default:
+        throw new Error("Unknown workspace operation.");
+    }
   }
 
   /** `context` is the agent loop's live context when called from the model-call hook. */

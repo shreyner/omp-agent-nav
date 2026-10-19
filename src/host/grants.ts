@@ -27,6 +27,8 @@ export class WorkspaceGrantState {
   #manager: GrantManager;
   #sessionId: string;
   #grants = new Set<string>();
+  /** Last ledger entry on the current branch; a relocation that changes nothing writes nothing. */
+  #persisted?: string;
   #transition = new AsyncLocalStorage<boolean>();
   #setDirectories: GrantManager["setAdditionalDirectories"];
 
@@ -98,19 +100,27 @@ export class WorkspaceGrantState {
     ) {
       this.initialCwd = saved.initialCwd;
       this.#grants = new Set(saved.grants as string[]);
+      this.#persisted = this.#snapshot();
     } else {
       this.initialCwd = this.#canonical(this.#manager.getCwd());
       this.#grants = new Set(
         this.#manager.getAdditionalDirectories().map((directory) => this.#canonical(directory)),
       );
+      this.#persisted = undefined;
     }
   }
 
+  #snapshot(): string {
+    return JSON.stringify({ initialCwd: this.initialCwd, grants: [...this.#grants] });
+  }
+
   async #persist(): Promise<void> {
-    this.#manager.appendCustomEntry(GRANTS_ENTRY, {
-      initialCwd: this.initialCwd,
-      grants: [...this.#grants],
-    });
+    const snapshot = this.#snapshot();
+    if (snapshot === this.#persisted) {
+      return;
+    }
+    this.#manager.appendCustomEntry(GRANTS_ENTRY, JSON.parse(snapshot));
+    this.#persisted = snapshot;
     await this.#manager.flush();
   }
 

@@ -65,6 +65,16 @@ test("accepts verified and newer same-major hosts, rejects older, next-major and
   expect(String(warnings[0])).toContain("host 18.99.0 is newer than the verified matrix");
 });
 
+test("library modules must come from the running omp, not another one on PATH (EXT-16)", async () => {
+  const installed = (await Bun.file(join(findInstalledOmp(), "package.json")).json()) as {
+    version: string;
+  };
+  const other = installed.version === "18.11.0" ? "18.11.1" : "18.11.0";
+  expect(() => createRuntime({ VERSION: other } as unknown as HostNamespace)).toThrow(
+    `differs from the running omp ${other}`,
+  );
+});
+
 test("ordinary installed CLI passes its version smoke check", async () => {
   const child = Bun.spawn([Bun.which("omp")!, "--version"], { stdout: "pipe", stderr: "pipe" });
   const [code, stdout, stderr] = await Promise.all([

@@ -143,3 +143,45 @@ for await (const line of createInterface({ input: process.stdin })) {
   expect(visible[0]?.description).toContain("project:A");
   expect(loadedPaths).toEqual([a, b, a]);
 });
+
+test("restoring a project tolerates its broken MCP server; a move does not (CR-5)", async () => {
+  const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), "omp-nav-mcp-broken-")));
+  temporary.push(root);
+  const servers = {
+    broken: { type: "stdio", command: join(root, "missing-binary"), timeout: 500 },
+  };
+  const manager = new MCPManager(root, null, async () => ({
+    configs: servers,
+    exaApiKeys: [],
+    sources: {
+      broken: { provider: "fixture", providerName: "Fixture", path: root, level: "project" },
+    },
+  }));
+  managers.push(manager);
+  const settings = Settings.isolated({ "mcp.startupTimeoutMs": 0 });
+  const nativeScope = {
+    settings,
+    getSessionSpawns: () => "*",
+    mcpManager: manager,
+    enableMCP: true,
+  };
+  let refreshed = 0;
+  const session = {
+    settings,
+    getToolByName: (name: string) => (name === "read" ? { session: nativeScope } : undefined),
+    getActiveToolNames: () => ["read"],
+    refreshMCPTools: async () => {
+      refreshed++;
+    },
+  } as unknown as SessionLike;
+  await expect(rescopeProjectMcp(runtime, session, root)).rejects.toThrow("MCP startup failed");
+  expect(refreshed).toBe(0);
+  const stderr = process.stderr.write;
+  process.stderr.write = () => true;
+  try {
+    await rescopeProjectMcp(runtime, session, root, false);
+  } finally {
+    process.stderr.write = stderr;
+  }
+  expect(refreshed).toBe(1);
+});

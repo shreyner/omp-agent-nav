@@ -193,6 +193,19 @@ describe("real omp agent loop with fake provider", () => {
     ).toBe(1);
   });
 
+  test("a second request during validation is refused instead of replacing the first (CR-8)", async () => {
+    const f = await fixture();
+    const [first, second] = await Promise.allSettled([
+      f.coordinator.request({ action: "move", dir: f.b }),
+      f.coordinator.request({ action: "move", dir: f.b }),
+    ]);
+    expect(first.status).toBe("fulfilled");
+    expect(second.status).toBe("rejected");
+    expect(String((second as PromiseRejectedResult).reason)).toContain("pending");
+    await f.coordinator.applyPending();
+    expect(f.manager.getCwd()).toBe(f.b);
+  });
+
   test("rejects the entire move + write batch before either tool has effects", async () => {
     const f = await fixture({ mixed: true });
     await f.agent.prompt("mixed");

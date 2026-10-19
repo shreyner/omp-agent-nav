@@ -80,6 +80,12 @@ test("native manager preserves accepted B across A/B/worktree and revokes it wit
     expect(state.roots()).toEqual([b]);
     expect(manager.getCwd()).toBe(target);
   }
+  // Four moves with unchanged grants write the ledger once (CR-10).
+  expect(
+    manager
+      .getBranch()
+      .filter((entry) => entry.type === "custom" && entry.customType === "omp-agent-nav.workspace"),
+  ).toHaveLength(1);
   const resumed = SessionManager.inMemory(a);
   resumed.restoreState(manager.captureState());
   const restored = new WorkspaceGrantState(resumed);
