@@ -130,9 +130,16 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
       await bridge.notifyAfterRelocation(bridge.currentSession(ctx));
     }
   });
-  pi.on("session_tree", (_event, ctx) => {
-    if (ctx.agent.kind === "main") {
-      bridge.reloadGrantBranch(ctx);
+  // The user's own /add-dir and /remove-dir decide navigation roots; the host runs them right after.
+  pi.on("input", async (event, ctx) => {
+    const command = /^\/(add-dir|remove-dir)\s+(.+)$/.exec(String(event.text ?? "").trim());
+    if (
+      command &&
+      ctx.agent.kind === "main" &&
+      (event.source === "interactive" || event.source === "rpc") &&
+      (ctx.isIdle as () => boolean)()
+    ) {
+      await bridge.onUserDirCommand(ctx, command[1] as "add-dir" | "remove-dir", command[2]);
     }
   });
   pi.on("session_shutdown", (_event, ctx) => {

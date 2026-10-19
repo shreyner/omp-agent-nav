@@ -39,7 +39,7 @@ Bridge оборачивает `InteractiveMode.init`, запуск памяти 
 
 Move/enter/exit используют [WorkspaceBridge.relocate](../src/host.ts) (NAV-01, NAV-04):
 
-1. Сохранить состояние сессии, завершить записи памяти и flush хранилища сессии. Перенести в ledger штатные корни, которые покрывают цель или её primary, и записать ledger — до переезда ([разрешения](#grants)).
+1. Сохранить состояние сессии, завершить записи памяти и flush хранилища сессии. Записать ledger до переезда, чтобы зафиксировать начальный корень ([разрешения](#grants)).
 2. Через штатный move перенести JSONL и cwd, сохраняя session ID и историю.
 3. Перезагрузить настройки и ресурсы цели: TUI использует своего владельца, headless — общие helpers. Перевязать память и проектные MCP, обновить skills/commands и базовый prompt.
 4. Обновить task/artifact anchor и отображение TUI.
@@ -57,15 +57,21 @@ LSP использует cwd цели и штатное управление р�
 
 Разрешения и загрузка инструкций разделены без перехватов: гранты живут только в ledger расширения, а штатный prompt подмешивает AGENTS и workspace tree лишь каталогов штатного списка (`--add-dir`). Поэтому грант B не добавляет AGENTS B к prompt основной сессии A.
 До 2026-10-19 гранты зеркалировались в штатный список, и `installInstructionScope` (4 патча: context-file providers, `SessionTools.runToolRegistryMutation`, `AgentSession.refreshBaseSystemPrompt`/`prompt`) глушил AGENTS всех дополнительных каталогов, включая пользовательский `--add-dir`. Перехват удалён вместе с зеркалированием.
-Bundled print закрепляет штатное поведение `--add-dir`: AGENTS B видны в A до перехода, а после A → B → A, когда B уже перенесён в ledger, их нет. Это сквозная проверка того, что корень из ledger не подмешивает AGENTS. Bundled TUI/RPC A → B → A и print task B подтверждают то же для корня, перенесённого из `--add-dir`. Выдачу через `workspace_grant` source-тесты проверяют по пустому штатному списку ([V20](verification.md#v20)).
+Bundled print закрепляет штатное поведение `--add-dir`: AGENTS B видны в A до перехода, а после A → B → A их нет — штатный `moveTo` убрал B из списка, а доступ к B держит ledger. Это сквозная проверка того, что корень из ledger не подмешивает AGENTS. Bundled TUI/RPC A → B → A и print task B подтверждают то же для корня из `--add-dir`. Выдачу через `workspace_grant` source-тесты проверяют по пустому штатному списку ([V20](verification.md#v20)).
 
 <a id="grants"></a>
 ## Разрешения и занятость
 
-[WorkspaceGrantState](../src/host/grants.ts) хранит начальный корень и гранты в session custom entry `omp-agent-nav.workspace` (NAV-06) и SessionManager не патчит. Принятые корни — dedupe realpath ledger и `trustedNative()`. В `trustedNative()` входит живой штатный список без двух групп каталогов: тех, что называют текущие настройки `workspace.additionalDirectories`, и тех, что помечены недоверенными (`untrusted`, хранится в записи ledger и только растёт). Navigation, approval и `workspace_grant` читают одну функцию `roots()`. Значение настройки bridge читает синхронно через реестр настроек, загруженный при установке (`loadSettingRegistry`), потому что approval вычисляется синхронно. Значения раскрываются так же, как в хосте (`normalizeWorkspaceDirectory`): `~` — домашний каталог, относительный путь — от текущего cwd.
-Засев без записи ledger. При создании состояния (старт процесса) в ledger попадает весь штатный список: `--add-dir`, настройки стартового проекта и глобальные. При смене session id (`/new`, `/resume`, fork) — только `trustedNative()`. На `session_tree` применяется запись ветки, а без неё — засев сессии.
-Перед `moveSession` [relocate](../src/host/bridge.ts) переносит в ledger штатные корни из `trustedNative()`, внутри которых лежит цель или её primary, и сохраняет запись. Так корень переживает и штатный `moveTo` (он убирает новый cwd из списка), и settings watcher цели (он может убрать корни из `workspace.additionalDirectories`), а повторная проверка после переезда проходит. Запись до переезда фиксирует и начальный корень.
-Сразу после rescope цели relocate помечает недоверенными каталоги, которые называют её настройки (`distrustConfigured`). Watcher хоста вызывает async-обработчики без ожидания (`#fireChangesSince` синхронный), поэтому сравнение списка «до и после» ненадёжно, а пометка по значениям настроек от времени не зависит. При ошибке `rollbackMove` восстанавливает записи сессии, а снимок, снятый до переезда, возвращает память к прежним грантам; недоверенные пометки неудачного переезда сохраняются.
+[WorkspaceGrantState](../src/host/grants.ts) хранит начальный корень и гранты в session custom entry `omp-agent-nav.workspace` (NAV-06) и SessionManager не патчит. Принятые корни — только ledger: `roots()` читают navigation, approval и `workspace_grant`. Действует последняя запись сессии по `getEntries()`, а не по ветке. Пути раскрываются как в хосте (`normalizeWorkspaceDirectory`: `~` — домашний каталог, относительный путь — от cwd), затем realpath (`canonicalDirectory`).
+Источники грантов:
+- диалоги;
+- `--add-dir`: bridge при установке берёт его из `parseArgs` командной строки (`loadLaunchRoots`) и добавляет к ledger при создании состояния; относительный путь — от `process.cwd()`;
+- `workspace.additionalDirectories` стартовых настроек: засевает состояние без записи ledger, значение читается синхронно через реестр настроек;
+- событие `input`, где пользователь ввёл `/add-dir`/`/remove-dir` в TUI или RPC ([index.ts](../src/index.ts), `onUserDirCommand`).
+
+Штатный список дополнительных каталогов как источник корней не читается. Его пишут и settings watcher (async-обработчики, `#fireChangesSince` их не ждёт), и относительные значения от меняющегося cwd. Три раунда ревью 2026-10-19 показали, что вычитание «недоверенных» из этого списка обходится через относительные пути, symlink, `/new`, откат и `/tree`.
+При смене session id без записи (`/new`, `/resume`, fork) прежние корни переносятся: прежний старт становится грантом, новый старт — текущий cwd.
+Перед `moveSession` [relocate](../src/host/bridge.ts) сохраняет запись ledger: так фиксируется начальный корень до того, как файл сессии переедет. При ошибке `rollbackMove` восстанавливает записи сессии; гранты в памяти переезд не меняет.
 Новая запись ledger добавляется только при изменении: переезд без изменений не пишет в журнал (до 2026-10-19 каждый переход добавлял одинаковую запись).
 `/nav-roots revoke` удаляет корень из ledger и передаёт штатному `removeWorkspaceDirectory` строку в той форме, в какой она хранится в списке: штатное сравнение идёт по `path.resolve`, а не по realpath.
 До 2026-10-19 ledger засевался из штатного списка, а обёртки `addWorkspaceDirectory`/`removeWorkspaceDirectory`/`setAdditionalDirectories` и AsyncLocalStorage transition синхронизировали оба хранилища.

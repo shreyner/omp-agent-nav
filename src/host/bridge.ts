@@ -16,7 +16,12 @@ import {
   type SessionLike,
 } from "../types";
 import { WorkspaceCoordinator } from "./coordinator";
-import { type GrantManager, WorkspaceGrantState, WorkspaceRollbackError } from "./grants";
+import {
+  canonicalDirectory,
+  type GrantManager,
+  WorkspaceGrantState,
+  WorkspaceRollbackError,
+} from "./grants";
 import { type RescopableSession, rescopeProjectMcp } from "./mcp";
 
 interface MemoryBridgeLike {
@@ -46,6 +51,7 @@ export class WorkspaceBridge {
   #approvedRoots = new WeakMap<object, Map<string, string>>();
   #workspaceApplying = new WeakSet<object>();
   #settingRegistry?: { lookup(id: string): { get(settings: unknown): unknown } | undefined };
+  #launchAdded: string[] = [];
   #activeMain?: {
     sessionManager: SessionLike["sessionManager"];
     session: SessionLike;
@@ -57,10 +63,17 @@ export class WorkspaceBridge {
     this.runtime = runtime;
   }
 
-  /** Root checks run synchronously (approval), so the settings registry is loaded up front. */
-  async loadSettingRegistry(): Promise<void> {
+  /**
+   * The directories omp was started with seed a new session's grants. They are read up front:
+   * grant state is created synchronously, from the first coordinator call.
+   */
+  async loadLaunchRoots(argv = process.argv.slice(2)): Promise<void> {
     await this.runtime.importModule("config/all-settings.ts");
     this.#settingRegistry = await this.runtime.importModule("config/registry.ts");
+    const cli = await this.runtime.importModule<{
+      parseArgs(args: string[]): { addDir?: string[] };
+    }>("cli/args.ts");
+    this.#launchAdded = cli.parseArgs(argv).addDir ?? [];
   }
 
   /** `workspace.additionalDirectories` of the current settings, as configured. */
@@ -174,9 +187,10 @@ export class WorkspaceBridge {
   #grants(session: SessionLike): WorkspaceGrantState {
     let grants = this.#grantStates.get(session.sessionManager);
     if (!grants) {
-      grants = new WorkspaceGrantState(session.sessionManager as GrantManager, () =>
-        this.#configuredRoots(session),
-      );
+      grants = new WorkspaceGrantState(session.sessionManager as GrantManager, {
+        added: this.#launchAdded,
+        configured: this.#configuredRoots(session),
+      });
       this.#grantStates.set(session.sessionManager, grants);
     }
     return grants;
@@ -317,7 +331,7 @@ export class WorkspaceBridge {
     const navigation = this.coordinator(ctx).navigation;
     const grants = this.#grants(session);
     const target = this.#namedRoot(navigation, expandPath(dir, session.sessionManager.getCwd()));
-    const ledger = grants.ledger().filter(target.matches);
+    const ledger = grants.roots().filter(target.matches);
     const native = grants.native().filter(([root]) => target.matches(root));
     const initial = await navigation.initialRoot();
     const revoked = [...new Set([...ledger, ...native.map(([root]) => root)])];
@@ -352,6 +366,32 @@ export class WorkspaceBridge {
       await session.refreshBaseSystemPrompt();
     }
     return { revoked, coveredBy };
+  }
+
+  /**
+   * The user typed `/add-dir` or `/remove-dir`; the input hook sees it before the host runs the
+   * command. The directory becomes or stops being a navigation root, mirroring the host's own
+   * checks (idle, existing directory, not the cwd). Nothing else that writes the native list —
+   * the settings watcher above all — grants a root.
+   */
+  async onUserDirCommand(
+    ctx: ExtensionContextLike,
+    command: "add-dir" | "remove-dir",
+    dir: string,
+  ): Promise<void> {
+    const session = this.currentSession(ctx);
+    const grants = this.#grants(session);
+    const cwd = canonicalDirectory(session.sessionManager.getCwd(), "/");
+    const root = canonicalDirectory(dir, cwd);
+    if (command === "add-dir") {
+      if (root === cwd || root.split(sep).includes(".git") || !existsSync(root)) {
+        return;
+      }
+      grants.add(root);
+    } else if (pathIsWithin(root, cwd) || !grants.revoke(root)) {
+      return;
+    }
+    await grants.persist();
   }
 
   /**
@@ -468,25 +508,6 @@ export class WorkspaceBridge {
     return coordinator;
   }
 
-  /**
-   * Native roots that authorize `cwd` move into the ledger before the move: native moveTo drops
-   * the new cwd from the native list and the settings watcher may drop configured roots, yet the
-   * post-move validation and later navigation must still accept them. Persisting first also
-   * records the start root before the session file moves; a rollback restores the entries.
-   */
-  async #adoptNativeRoots(session: SessionLike, cwd: string): Promise<void> {
-    const grants = this.#grants(session);
-    const primary = this.#coordinators
-      .get(session.sessionManager)
-      ?.navigation.previewProjectRoot(cwd);
-    for (const [root] of grants.trustedNative()) {
-      if (pathIsWithin(root, cwd) || (primary !== undefined && pathIsWithin(root, primary))) {
-        grants.add(root);
-      }
-    }
-    await grants.persist();
-  }
-
   /** Resolves to a warning when project MCP of `cwd` started only partially. */
   async relocate(session: SessionLike, cwd: string): Promise<string | undefined> {
     const previous = session.sessionManager.captureState();
@@ -495,45 +516,29 @@ export class WorkspaceBridge {
     }
     await session.settleMemoryBackend();
     await session.sessionManager.flush();
-    const grants = this.#grants(session);
-    const restoreGrants = grants.snapshot();
     try {
-      await this.#adoptNativeRoots(session, cwd);
+      // Records the start root before the session file moves; a rollback restores the entries.
+      await this.#grants(session).persist();
       await session.moveSession(cwd);
       const warning = await this.#rescope(session, cwd);
-      // The host's settings watcher adds the target's configured dirs asynchronously; record them
-      // now so they never become roots, even if it adds them later or cannot remove them.
-      grants.distrustConfigured();
-      await grants.persist();
       await this.#coordinators.get(session.sessionManager)?.navigation.validateMove(cwd);
       await session.refreshBaseSystemPrompt();
       await this.notifyAfterRelocation(session);
       return warning;
     } catch (error) {
-      const distrusted = grants.distrustConfigured();
-      throw await this.#restore(session, previous, restoreGrants, distrusted, error);
+      throw await this.#restore(session, previous, error);
     }
   }
 
-  /**
-   * Rolls a failed move back; resolves to the error to throw. `restoreGrants` returns memory to
-   * the pre-move grants; `persistDistrust` records dirs the failed target's settings named.
-   */
+  /** Rolls a failed move back; resolves to the error to throw. */
   async #restore(
     session: SessionLike,
     previous: ReturnType<SessionLike["sessionManager"]["captureState"]>,
-    restoreGrants: () => void,
-    persistDistrust: boolean,
     error: unknown,
   ): Promise<Error> {
     let warning: string | undefined;
     try {
       await session.sessionManager.rollbackMove(previous);
-      // rollbackMove restored the entries written during the move; memory follows them.
-      restoreGrants();
-      if (persistDistrust) {
-        await this.#grants(session).persist();
-      }
       warning = await this.#rescope(session, previous.cwd);
       await session.refreshBaseSystemPrompt();
       await this.notifyAfterRelocation(session);
@@ -545,11 +550,6 @@ export class WorkspaceBridge {
     return new Error(
       `Workspace transition failed and was restored to ${previous.cwd}${warning ? ` (partially: ${warning})` : ""}: ${error instanceof Error ? error.message : String(error)}`,
     );
-  }
-
-  /** Tree navigation moved the leaf; grants follow the branch's ledger entry. */
-  reloadGrantBranch(ctx: ExtensionContextLike): void {
-    this.#grants(this.currentSession(ctx)).reloadBranch();
   }
 
   /**
@@ -620,7 +620,7 @@ async function createHostBridge(runtime: RuntimeModules): Promise<WorkspaceBridg
     );
   }
   const bridge = new WorkspaceBridge(runtime);
-  await bridge.loadSettingRegistry();
+  await bridge.loadLaunchRoots();
   const sessions = await runtime.importModule<{
     AgentSession: {
       prototype: SessionLike & {

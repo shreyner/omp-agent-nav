@@ -5,17 +5,17 @@ import { join, resolve } from "node:path";
 import { type SessionLike } from "../types";
 
 export type GrantManager = SessionLike["sessionManager"] & {
-  getBranch(): Array<{ type: string; customType?: string; data?: unknown }>;
   appendCustomEntry(customType: string, data: unknown): unknown;
+  getEntries(): Array<{ type: string; customType?: string; data?: unknown }>;
   removeWorkspaceDirectory(directory: string): Promise<string | null>;
 };
 
 const GRANTS_ENTRY = "omp-agent-nav.workspace";
 
-interface SavedGrants {
-  grants: string[];
-  initialCwd: string;
-  untrusted?: string[];
+/** Directories the user started omp with: `--add-dir` and the start project's or global settings. */
+export interface LaunchRoots {
+  added: string[];
+  configured: string[];
 }
 
 export class WorkspaceRollbackError extends Error {
@@ -25,120 +25,90 @@ export class WorkspaceRollbackError extends Error {
   }
 }
 
+/** `~` and relative paths resolve like the host's `normalizeWorkspaceDirectory`, then realpath. */
+export function canonicalDirectory(directory: string, base: string): string {
+  const expanded =
+    directory === "~" || directory.startsWith("~/")
+      ? join(homedir(), directory.slice(1))
+      : directory;
+  const absolute = resolve(base, expanded);
+  try {
+    return realpathSync(absolute);
+  } catch {
+    return absolute;
+  }
+}
+
 /**
- * Accepted roots are the extension's own grants (a session ledger entry, per branch) plus the live
- * native additional directories the user added (`--add-dir`, `/add-dir`). Grants never enter the
- * native list, so the host does not load their AGENTS into the prompt.
- *
- * The host's settings watcher also writes the native list: on a move it adds the target project's
- * `workspace.additionalDirectories`, which the user never approved. Those dirs are excluded twice:
- * while the current settings name them, and — because the watcher cannot always remove a relative
- * entry after the cwd changed — through the `untrusted` set recorded at each move. Only the native
- * list at process start (`--add-dir`, the start project's and global settings) seeds the ledger.
+ * Accepted roots are the start root and the extension's own grants (a session ledger entry). The
+ * native additional-directory list is never read as a root: the host's settings watcher writes it
+ * from whatever project the session enters, with relative values resolved against a moving cwd.
+ * Grants come only from the user: approval dialogs, the directories omp was started with, and the
+ * `/add-dir`/`/remove-dir` commands the user types (see the bridge's input hook).
  */
 export class WorkspaceGrantState {
   initialCwd: string;
   #manager: GrantManager;
-  #configured: () => string[];
   #sessionId: string;
   #grants = new Set<string>();
-  /** Grants the current session started with; tree navigation before any entry returns to them. */
-  #seed = new Set<string>();
-  #untrusted = new Set<string>();
 
-  constructor(manager: GrantManager, configured: () => string[] = () => []) {
+  constructor(manager: GrantManager, launch: LaunchRoots = { added: [], configured: [] }) {
     this.#manager = manager;
-    this.#configured = configured;
     this.#sessionId = manager.getSessionId();
-    this.initialCwd = manager.getCwd();
-    this.#start(this.native());
+    const saved = this.#saved();
+    this.initialCwd = saved?.initialCwd ?? this.#canonical(manager.getCwd());
+    // Start settings count only for a session without a ledger: a resumed session may sit in a
+    // project the agent moved to, whose settings the user never approved.
+    this.#grants = new Set(
+      saved?.grants ?? launch.configured.map((directory) => this.#canonical(directory)),
+    );
+    for (const directory of launch.added) {
+      this.#grants.add(canonicalDirectory(directory, process.cwd()));
+    }
   }
 
   #canonical(directory: string): string {
-    const expanded =
-      directory === "~" || directory.startsWith("~/")
-        ? join(homedir(), directory.slice(1))
-        : directory;
-    const absolute = resolve(this.#manager.getCwd(), expanded);
-    try {
-      return realpathSync(absolute);
-    } catch {
-      return absolute;
-    }
+    return canonicalDirectory(directory, this.#manager.getCwd());
   }
 
-  /** Last ledger entry on the current branch (tree navigation can change the branch). */
-  #saved(): SavedGrants | undefined {
-    const saved = this.#manager
-      .getBranch()
+  /** The session's latest ledger entry. Grants are session-wide like the native workspace header. */
+  #saved(): { initialCwd: string; grants: string[] } | undefined {
+    const data = this.#manager
+      .getEntries()
       .findLast((entry) => entry.type === "custom" && entry.customType === GRANTS_ENTRY)?.data as
-      | { initialCwd?: unknown; grants?: unknown; untrusted?: unknown }
+      | { initialCwd?: unknown; grants?: unknown }
       | undefined;
-    const strings = (value: unknown): value is string[] =>
-      Array.isArray(value) && value.every((item) => typeof item === "string");
-    if (typeof saved?.initialCwd !== "string" || !strings(saved.grants)) {
+    if (
+      typeof data?.initialCwd !== "string" ||
+      !Array.isArray(data.grants) ||
+      !data.grants.every((item) => typeof item === "string")
+    ) {
       return undefined;
     }
-    return {
-      initialCwd: saved.initialCwd,
-      grants: saved.grants,
-      untrusted: strings(saved.untrusted) ? saved.untrusted : [],
-    };
+    return { initialCwd: data.initialCwd, grants: data.grants };
   }
 
-  /** A session (re)starts from its ledger, or from `seed` when it has none yet. */
-  #start(seed: [string, string][]): void {
-    this.#seed = new Set(seed.map(([root]) => root));
-    const saved = this.#saved();
-    this.initialCwd = saved?.initialCwd ?? this.#canonical(this.#manager.getCwd());
-    this.#apply(saved);
-  }
-
-  #apply(saved: SavedGrants | undefined): void {
-    this.#grants = new Set(saved?.grants ?? this.#seed);
-    for (const root of saved?.untrusted ?? []) {
-      this.#untrusted.add(root);
-    }
-  }
-
+  /** On /new, /resume or a fork without a ledger entry the user's roots carry over. */
   #checkSession(): void {
     if (this.#sessionId === this.#manager.getSessionId()) {
       return;
     }
     this.#sessionId = this.#manager.getSessionId();
-    // A session switch (/new, /resume, fork) is not a process start: the native list may already
-    // hold the current project's settings, so only roots the user added seed it.
-    this.#start(this.trustedNative());
+    const saved = this.#saved();
+    if (saved) {
+      this.initialCwd = saved.initialCwd;
+      this.#grants = new Set(saved.grants);
+      return;
+    }
+    this.#grants.add(this.initialCwd);
+    this.initialCwd = this.#canonical(this.#manager.getCwd());
+    this.#grants.delete(this.initialCwd);
   }
 
-  /** Tree navigation moved the leaf: the branch's ledger entry, or the session's seed, applies. */
-  reloadBranch(): void {
-    this.#checkSession();
-    this.#apply(this.#saved());
-  }
-
-  /**
-   * Captures the start root and grants; the returned function restores them after a rollback.
-   * The untrusted set only grows: dirs a failed move's settings named stay excluded.
-   */
-  snapshot(): () => void {
-    const initialCwd = this.initialCwd;
-    const grants = new Set(this.#grants);
-    return () => {
-      this.#sessionId = this.#manager.getSessionId();
-      this.initialCwd = initialCwd;
-      this.#grants = grants;
-    };
-  }
-
-  /** Appends a ledger entry only when it differs from the branch's last one. */
+  /** Appends a ledger entry only when it differs from the session's latest one. */
   async persist(): Promise<void> {
     this.#checkSession();
-    const entry: SavedGrants = {
-      initialCwd: this.initialCwd,
-      grants: [...this.#grants],
-      untrusted: [...this.#untrusted],
-    };
+    const entry = { initialCwd: this.initialCwd, grants: [...this.#grants] };
     if (JSON.stringify(entry) === JSON.stringify(this.#saved() ?? null)) {
       return;
     }
@@ -146,8 +116,7 @@ export class WorkspaceGrantState {
     await this.#manager.flush();
   }
 
-  /** The extension's own grants. */
-  ledger(): string[] {
+  roots(): string[] {
     this.#checkSession();
     return [...this.#grants];
   }
@@ -159,31 +128,12 @@ export class WorkspaceGrantState {
       .map((directory) => [this.#canonical(directory), directory]);
   }
 
-  /** Native roots the user added: without dirs settings named at a move or name right now. */
-  trustedNative(): [string, string][] {
-    const configured = new Set(this.#configured().map((directory) => this.#canonical(directory)));
-    return this.native().filter(([root]) => !configured.has(root) && !this.#untrusted.has(root));
-  }
-
-  /**
-   * Records the dirs the settings of the cwd just entered name. The host resolves them against
-   * that cwd, as done here, and may fail to remove a relative one once the cwd changes again.
-   */
-  distrustConfigured(): boolean {
-    const before = this.#untrusted.size;
-    for (const directory of this.#configured()) {
-      this.#untrusted.add(this.#canonical(directory));
-    }
-    return this.#untrusted.size > before;
-  }
-
-  roots(): string[] {
-    return [...new Set([...this.ledger(), ...this.trustedNative().map(([root]) => root)])];
-  }
-
-  add(root: string): void {
+  /** Grants `directory` as the user typed it, resolved against the current cwd. */
+  add(directory: string): string {
     this.#checkSession();
-    this.#grants.add(this.#canonical(root));
+    const root = this.#canonical(directory);
+    this.#grants.add(root);
+    return root;
   }
 
   revoke(root: string): boolean {

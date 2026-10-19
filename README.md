@@ -67,10 +67,11 @@ project. In the TUI, `session_move` into a directory outside the allowed roots a
 and grants the target's primary checkout. Without an interactive UI (print mode, RPC) both that
 approval and `workspace_grant` fail closed, so allow directories up front with `--add-dir`.
 
-Grants live in the session, not in omp's `--add-dir` list, so a granted project's AGENTS.md does
-not leak into the current prompt (`--add-dir` keeps its native behaviour and does). `/nav-roots`
-lists the roots with their source; `/nav-roots revoke <dir>` revokes one (`/remove-dir` does not
-touch grants).
+Navigation roots are the start project plus grants stored in the session: approved dialogs,
+`--add-dir`, and `/add-dir` / `/remove-dir` you type. Grants stay out of omp's additional-directory
+list, so a granted project's AGENTS.md does not leak into the current prompt (`--add-dir` keeps its
+native behaviour and does). `/nav-roots` lists the roots with their source; `/nav-roots revoke
+<dir>` revokes one.
 
 Subagent in another project:
 
@@ -88,10 +89,10 @@ memory backend.
 
 - Workspace roots guard navigation and `task.cwd` only. They are **not** a sandbox: omp file and
   shell tools are not restricted by them.
-- Directories that `workspace.additionalDirectories` settings add are not navigation roots (a move
-  target's project config could otherwise grant itself anything). Roots present when omp starts
-  (`--add-dir`, the start project's and global settings) and `/add-dir` of other directories are;
-  for a directory a setting names, use `workspace_grant`.
+- Directories that `workspace.additionalDirectories` settings add during a session are not
+  navigation roots (a move target's project config could otherwise grant itself anything); the
+  start project's and global settings count for a new session. `/add-dir` and `/remove-dir` count
+  only when typed in the TUI or RPC.
 - After a move, the main session keeps the JS/TS extensions and custom tools it loaded at startup;
   extensions of the target project are not loaded. New subagents load the target's extensions.
 - `SYSTEM.md` / `SYSTEM_TEMPLATE.md` overrides are resolved once when omp starts; after a move the

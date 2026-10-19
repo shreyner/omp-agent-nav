@@ -112,6 +112,7 @@ export const hostedModules: Readonly<Record<string, () => Promise<unknown>>> = {
   "session/artifacts.ts": () => import("@oh-my-pi/pi-coding-agent/session/artifacts"),
   "config/all-settings.ts": () => import("@oh-my-pi/pi-coding-agent/config/all-settings"),
   "config/registry.ts": () => import("@oh-my-pi/pi-coding-agent/config/registry"),
+  "cli/args.ts": () => import("@oh-my-pi/pi-coding-agent/cli/args"),
   "config/settings.ts": () => import("@oh-my-pi/pi-coding-agent/config/settings"),
   "capability/index.ts": () => import("@oh-my-pi/pi-coding-agent/capability"),
   "discovery/helpers.ts": () => import("@oh-my-pi/pi-coding-agent/discovery/helpers"),
