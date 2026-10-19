@@ -64,7 +64,9 @@ interface PromptRenderContext {
   xdevEntries: Array<{ name: string }>;
 }
 
-const installations = new WeakMap<object, WorkspaceBridge>();
+// omp re-imports the extension graph (`?mtime=`) for every subagent session, so module-local
+// state cannot see an earlier install. The process-wide key lives on the patched host prototype.
+const HOST_BRIDGE = Symbol.for("omp-agent-nav.host-bridge");
 
 export class WorkspaceBridge {
   readonly runtime: RuntimeModules;
@@ -759,12 +761,19 @@ export class WorkspaceBridge {
 }
 
 export async function installHostBridge(runtime: RuntimeModules): Promise<WorkspaceBridge> {
+  const prototype = runtime.host.ExtensionRunner.prototype as {
+    [HOST_BRIDGE]?: Promise<WorkspaceBridge>;
+  };
+  prototype[HOST_BRIDGE] ??= createHostBridge(runtime).catch((error) => {
+    delete prototype[HOST_BRIDGE];
+    throw error;
+  });
+  return await prototype[HOST_BRIDGE];
+}
+
+async function createHostBridge(runtime: RuntimeModules): Promise<WorkspaceBridge> {
   const host: HostNamespace = runtime.host;
   const prototype = host.ExtensionRunner.prototype;
-  const existing = installations.get(prototype);
-  if (existing) {
-    return existing;
-  }
   const registry = await runtime.importModule<{ AgentRegistry: HostNamespace["AgentRegistry"] }>(
     "registry/agent-registry.ts",
   );
@@ -791,7 +800,6 @@ export async function installHostBridge(runtime: RuntimeModules): Promise<Worksp
       ? await bridge.runBtw(this, () => ephemeral.call(this, args))
       : await ephemeral.call(this, args);
   };
-  installations.set(prototype, bridge);
   const createContext = prototype.createContext;
   prototype.createContext = function (...args: unknown[]) {
     const ctx = createContext.apply(this, args);

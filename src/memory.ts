@@ -43,10 +43,23 @@ export interface MemoryBridge {
   getState(session: SessionLike): MemoryState | undefined;
 }
 
-const installed = new WeakMap<object, MemoryBridge>();
+// Process-wide like the host bridge: each subagent re-imports this module graph.
+const MEMORY_BRIDGE = Symbol.for("omp-agent-nav.memory-bridge");
 
 /** Own library resources independently of native session disposal, while sharing its public state. */
 export async function installMemoryBridge(runtime: RuntimeModules): Promise<MemoryBridge> {
+  const { AgentSession } = await runtime.importModule<{
+    AgentSession: { prototype: { [MEMORY_BRIDGE]?: Promise<MemoryBridge> } };
+  }>("session/agent-session.ts");
+  const prototype = AgentSession.prototype;
+  prototype[MEMORY_BRIDGE] ??= createMemoryBridge(runtime).catch((error) => {
+    delete prototype[MEMORY_BRIDGE];
+    throw error;
+  });
+  return await prototype[MEMORY_BRIDGE];
+}
+
+async function createMemoryBridge(runtime: RuntimeModules): Promise<MemoryBridge> {
   const [
     { mnemopiBackend },
     stateModule,
@@ -87,10 +100,6 @@ export async function installMemoryBridge(runtime: RuntimeModules): Promise<Memo
       lookup(id: string): { get(settings: SettingsLike): unknown } | undefined;
     }>("config/registry.ts"),
   ]);
-  const existing = installed.get(mnemopiBackend);
-  if (existing) {
-    return existing;
-  }
   const originalStart = mnemopiBackend.start.bind(mnemopiBackend);
   const [{ resolveMemoryBackend }, { Settings }] = await Promise.all([
     runtime.importModule<{
@@ -467,7 +476,6 @@ export async function installMemoryBridge(runtime: RuntimeModules): Promise<Memo
     stopping = true;
     await terminate();
   });
-  installed.set(mnemopiBackend, bridge);
   return bridge;
 }
 async function captureNativeStateSlot(
