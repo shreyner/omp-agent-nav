@@ -1,6 +1,6 @@
 {
   "name": "omp-agent-nav",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "oh-my-pi (omp) extension: move an agent session between projects and git worktrees, and run subagents in another project via task.cwd.",
   "keywords": [

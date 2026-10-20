@@ -107,7 +107,7 @@ The extension hooks into omp internals: non-public modules of `@oh-my-pi/pi-codi
 prototype wrappers around session classes, and Mnemopi library modules from the installed package.
 Upgrades of omp can break it even within a major version.
 
-- Verified: omp 18.11.0 – 18.12.2 (`SUPPORTED_OMP_VERSIONS` in [src/runtime.ts](src/runtime.ts)).
+- Verified: omp 18.11.0 – 18.12.3 (`SUPPORTED_OMP_VERSIONS` in [src/runtime.ts](src/runtime.ts)).
 - Other 18.x versions >= 18.11.0 load with a warning; older versions, pre-release / non-semver
   versions and the next major are rejected at startup.
 - The `omp` found on `PATH` must be the running installation (same version): Mnemopi is loaded

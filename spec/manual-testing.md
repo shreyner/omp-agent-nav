@@ -1,10 +1,9 @@
 # Ручная проверка с моделью
 
 Запусти обычный `omp` в выбранном рабочем каталоге и вставь один промт ниже. Расширение берётся из глобального config; `-e`, отдельная конфигурация и предварительные shell-команды не нужны.
-Запусти обычный `omp` в выбранном рабочем каталоге и вставь один промт ниже. Расширение берётся из глобального config; `-e`, отдельная конфигурация и предварительные shell-команды не нужны.
 Модель сама создаст одноразовые проекты внутри разрешённого начального каталога и сохранит отчёт. Сценарий **выполнен 2026-10-13** (omp 18.10.3) и **повторён 2026-10-15** (omp 18.11.0): M01–M07 PASS, M08 вне промта; итоги — в таблице ниже и в [verification.md](verification.md#manual-model). Автоматические проверки находятся в [verification.md](verification.md#results).
 
-Отдельный [промт живой проверки approval-диалогов](#approval-prompt) закрывает границу интерактивных подтверждений NAV-08/NAV-09; он требует человека за терминалом. **Выполнен 2026-10-15** (omp 18.11.0): M09-deny/git PASS; M09-wg — грант выдан, но approval-диалог session_move не снят. Разбор 2026-10-19: путь цели под `$TMPDIR` сравнивался лексически с realpath-корнями; это же делает недостоверным «повтор без диалога» в M09-grant. Исправлено, живой повтор M09 ожидается; итоги — в таблице ниже и в [verification.md](verification.md#v18).
+Отдельный [промт живой проверки approval-диалогов](#approval-prompt) закрывает границу интерактивных подтверждений NAV-08/NAV-09; он требует человека за терминалом. **Выполнен 2026-10-15** (omp 18.11.0): M09-deny/git PASS; M09-wg — грант выдан, но approval-диалог session_move не снят. Разбор 2026-10-19: путь цели под `$TMPDIR` сравнивался лексически с realpath-корнями; это же делает недостоверным «повтор без диалога» в M09-grant. Исправлено. Живой повтор M09 и первая проверка M10 вошли в [живой прогон 0.3.0](#live-prompt) 2026-10-20: L01–L11 PASS. Итоги — в таблице ниже и в [verification.md](verification.md#live-run).
 
 Fixture `.omp/nav-manual-<runId>` останется в исходном проекте вместе с отчётом, банками, тестовыми ветками и worktree `nav-probes`. Если родительский Git его не игнорирует, он будет виден как untracked; родительские `.gitignore`/exclude сценарий не меняет.
 Явные записи файлов и памяти этого теста ограничены fixture. Обычное хранилище сессии, стартовая память и автоматическое поведение уже запущенного omp продолжают работать по его текущим настройкам.
@@ -71,6 +70,87 @@ Fixture `.omp/nav-manual-<runId>` останется в исходном про�
 7. Сохрани <fixture>/manual-result.md: дата, version/model/session ID, runId, каждый M09-* как PASS/FAIL/NOT RUN с ожидание → факт, включая дословные слова человека о тексте диалогов (reason, dir) и об отсутствии диалога там, где он не нужен. В ответе дай короткую таблицу и путь отчёта. NOT RUN: M08 и всё вне approval-сценария; одноразовые tmp-каталоги можно оставить.
 ```
 
+<a id="live-prompt"></a>
+## Промт живой проверки 0.3.0 (L01–L11)
+
+Один прогон проверяет основные сценарии вместе, включая M09 и M10:
+- переезды, worktree, `task.cwd`, память;
+- подтверждения, `/nav-roots`, `/add-dir` и `/remove-dir`;
+- настройки цели, MCP-warning, перенос корней при `/fork`.
+
+Запусти обычный `omp` в каталоге с проектами (workspace), без `--add-dir`, и вставь промт. За терминалом нужен человек: диалоги и вывод slash-команд видит только он, на шагах «ЧЕЛОВЕК» модель ждёт. Полигон модель создаёт сама: папку в начальном cwd и каталог в `$TMPDIR`. Каталог в `$TMPDIR` нужен вне стартового корня, иначе диалогов не будет. Если прогон прерывается надолго, macOS может очистить `$TMPDIR`; в этом случае пересоздай `<T>` с теми же путями. Выполнен 2026-10-20: [результат](verification.md#live-run).
+
+```text
+Проведи живую проверку omp-agent-nav в этой сессии обычного omp. Не меняй код расширения, global config и установленный omp. Подготовленных папок нет — полигон создай сам.
+
+ГРАНИЦЫ. Начальный cwd (S) — общий workspace с настоящими проектами: их файлы, ветки, индекс и ignore не трогай и не читай без нужды. Пиши только в новую папку F = S/nav-live-<уникальный runId> и в <T> = $TMPDIR/nav-live-<runId>. Путь <T> бери лексически, как его отдаёт $TMPDIR: на macOS это /var/…, realpath — /private/var/…, это часть проверки. <T> нужен вне S, потому что всё внутри S уже разрешено стартовым корнем. git init/commit — только в synthetic-репозиториях F, с -c commit.gpgsign=false -c user.name="Live fixture" -c user.email=fixture@example.invalid. Запрещены force, rm каталогов, shell git worktree add/remove, memory clear/reset, установка зависимостей, чтение секретов и пользовательских банков. Не обходи отказы.
+
+ПРАВИЛА ВЫЗОВОВ. session_move, worktree_create/enter/exit/remove и workspace_grant вызывай напрямую и строго по одному в пакете. Queued — это только квитанция: дождись итогового applied/failed/cancelled и проверяй состояние следующим вызовом (pwd без cd и относительный read). cd в shell session_move не заменяет.
+
+ЧЕЛОВЕК. Диалоги подтверждения и вывод slash-команд видит только человек. Перед вызовом, который вызовет диалог, одной строкой напиши «ДИАЛОГ: ожидаю <что>, выбери <approve/deny>». На шаге с пометкой «ЧЕЛОВЕК:» заверши ответ одной строкой, что ввести или проверить, и жди: slash-команды работают только в простое. Попроси человека дословно продиктовать текст первого диалога session_move (причину и строку dir). Слова человека вноси в отчёт дословно. Не выдумывай наблюдений.
+
+ОТЧЁТ. Для каждого L01…L11 записывай PASS / FAIL / NOT RUN, ожидание → факт и короткий сырой вывод инструмента.
+
+L01. Старт. Сохрани canonical S, omp --version, модель и session ID. Проверь наличие инструментов session_move, worktree_list/create/enter/exit/remove, workspace_grant и поля cwd у task. Если чего-то нет, остановись с диагностикой.
+Создай F. В нём A, B и C — отдельные synthetic Git-репозитории (ветка main, один коммит). Содержимое каждого:
+- marker.txt = PROJECT_A/B/C;
+- AGENTS.md с INSTRUCTION_A/B/C;
+- .omp/agents/nav-probe.md (frontmatter name: nav-probe, description; тело AGENT_A/B/C);
+- .omp/config.yml ровно такой структуры (mnemopi — отдельная секция верхнего уровня, не внутри memory):
+  memory: {backend: mnemopi}
+  mnemopi: {dbPath: <F>/memory/mnemopi.db, bank: <runId>, scoping: per-project, noEmbeddings: true, llmMode: none, autoRecall: false, autoRetain: false}
+  async: {enabled: false}
+  autolearn: {enabled: false}
+  task: {batch: false, isolation: {enabled: false}} — в B batch: true.
+В C дополнительно закоммить .mcp.json: {"mcpServers":{"nav-broken":{"command":"/nonexistent/nav-broken-mcp-<runId>"}}}.
+Создай каталоги <T>/grant, <T>/deny, <T>/wg, <T>/wg/sub, <T>/d, <T>/e/E, <T>/e/other. В <T>/e/E положи .omp/config.yml с workspace.additionalDirectories: [".."].
+ЧЕЛОВЕК: введи /nav-roots и пришли вывод. Ожидание: ровно одна строка «start: S».
+
+L02. Переезды. session_move A → B → A. После каждого applied выполни pwd и относительный read marker.txt и назови видимый маркер INSTRUCTION_*. В B относительным write создай probe.txt, проверь, что он есть в B и нет в A, затем удали только его. Session ID должен сохраниться.
+
+L03. Worktree. Перейди в B. Двумя worktree_create создай ветки nav-probes-<runId> и nav-cleanup-<runId> с path .claude/worktree/nav-probes и .claude/worktree/nav-cleanup. Main должен остаться в B. Проверь, что HEAD в обоих = HEAD B, что оба чистые и есть в worktree_list. worktree_enter в nav-cleanup → pwd → worktree_exit → pwd = B.
+
+L04. task.cwd. Вернись в A. Одиночный task (agent nav-probe, solutionSpace mechanical, cwd=B) с заданием: «выполни pwd, относительный read marker.txt, git branch; назови видимые INSTRUCTION_* и AGENT_*; скажи, доступны ли тебе session_move/worktree_*; ничего не пиши». Ожидание: B, PROJECT_B, INSTRUCTION_B и AGENT_B, навигационных инструментов нет, main остаётся в A.
+Перейди в B: схема task должна стать context + tasks[]. Одним batch-вызовом запусти nav-probe в A (cwd явный), в B (без cwd) и в nav-probes (cwd явный) с тем же заданием. Если сабагент не называет AGENT_*, это ещё не FAIL: самоописание модели ненадёжно, укажи путь к его сессии для разбора.
+ЧЕЛОВЕК: подтверди, что вызов task показан в обычном виде omp (агенты и прогресс, а не сырой JSON).
+
+L05. Память. В B выполни retain({"items":[{"content":"<runId> navbank B"}]}) и проверь, что конфиг полигона применился: в F/memory появилась база. Если её нет, остановись на L05 и не пиши в память дальше. worktree_enter в nav-cleanup → recall «<runId> navbank B» находит запись → worktree_exit. В A recall той же строки записи B не находит. Вернись в B.
+
+L06. Удаление worktree. Войди в nav-cleanup и создай untracked dirty.txt. worktree_remove nav-cleanup должен отказать (активный каталог). worktree_exit, снова remove — отказ из-за untracked, файл на месте. Удали только свой dirty.txt и повтори remove → applied. Каталога и записи нет, ветка nav-cleanup-<runId> сохранилась. nav-probes не трогай. Вернись в A.
+
+L07. Подтверждения (NAV-08/09).
+- grant: «ДИАЛОГ: approve». session_move <T>/grant. Ожидание: диалог с причиной «Цель вне принятых workspace-корней» и строкой «dir: <путь> → grant: <realpath>», затем applied, pwd в grant. Вернись в A без диалога, снова session_move <T>/grant без диалога → applied → A.
+- deny: «ДИАЛОГ: deny». session_move <T>/deny → отказ, cwd = A. Повтор → диалог снова, deny.
+- wg: «ДИАЛОГ: deny» на session_move <T>/wg, затем workspace_grant dirs=[<T>/wg] с «ДИАЛОГ: approve». Ожидание: granted содержит корень, повторный session_move <T>/wg проходит без диалога → вернись в A.
+- git: session_move <T>/grant/.git — без диалога, ошибка про Git metadata, cwd = A.
+- alias: symlink F/alias-deny → <T>/deny. «ДИАЛОГ: deny, проверь строку dir: …alias-deny → grant: <realpath deny>». session_move F/alias-deny → отказ.
+
+L08. /nav-roots и /add-dir (NAV-06/NAV-10).
+ЧЕЛОВЕК: /nav-roots. Ожидание: start S, grant <realpath grant>, grant <realpath wg>; deny нет.
+ЧЕЛОВЕК: /add-dir <T>/d. На macOS может появиться сообщение «/add-dir … accepts navigation into /private/var/…». Затем /nav-roots: d показан как add-dir. Дальше session_move <T>/d без диалога → applied → вернись в A.
+ЧЕЛОВЕК: /remove-dir <T>/d. Затем «ДИАЛОГ: deny» и session_move <T>/d: диалог появляется снова.
+Перейди в <T>/grant.
+ЧЕЛОВЕК: /nav-roots revoke <T>/grant. Ожидание: отказ «The session is inside …; move out of it before revoking it.»
+Вернись в A.
+ЧЕЛОВЕК: /nav-roots revoke <T>/grant. Ожидание: «Revoked <realpath grant>.»
+ЧЕЛОВЕК: /nav-roots revoke S. Ожидание: отказ «… is the start project; it cannot be revoked.»
+Затем «ДИАЛОГ: deny» и session_move <T>/grant: диалог снова появился.
+
+L09. Настройки цели не выдают доступ. workspace_grant dirs=[<T>/e/E] («ДИАЛОГ: approve»), session_move <T>/e/E → applied.
+ЧЕЛОВЕК: /nav-roots. Ожидание: <T>/e не корень.
+Затем «ДИАЛОГ: deny» и session_move <T>/e/other: диалог появляется, переход отклонён. Вернись в A.
+
+L10. MCP при переезде. session_move C. Ожидание: applied, а не failed. В результате есть warning со строкой «MCP startup failed for …C…», pwd = C. Если warning нет, запиши фактический результат и то, загружает ли omp вообще .mcp.json проекта; не чини. Вернись в A.
+
+L11. Перенос корней при /fork. session_move <T>/wg (без диалога).
+ЧЕЛОВЕК: введи /fork, а в новой сессии напиши «продолжай L11».
+В форке: session_move <T>/wg/sub без диалога → applied.
+ЧЕЛОВЕК: /nav-roots. Ожидание: start <realpath wg>, grant S, остальные гранты на месте.
+Затем session_move A без диалога → applied.
+
+ФИНАЛ. Вернись session_move в S, проверь pwd. Сохрани F/live-result.md: дата, версия, модель, session ID (до и после /fork), runId, таблица L01–L11 с подкритериями, сырые выводы и дословные ответы человека, созданные ветки и пути. В ответе дай короткую таблицу и путь к отчёту. F, <T>, nav-probes и ветки не удаляй.
+```
+
 ## Покрытие и результат
 
 | ID | Требования | Проверяемое наблюдение | Статус |
@@ -83,8 +163,9 @@ Fixture `.omp/nav-manual-<runId>` останется в исходном про�
 | M06 | WT-06, NAV-01 | Чистый nav-cleanup удалён, ветка/коммит и исходные данные сохранены | PASS 2026-10-13 |
 | M07 | MEM-01, MEM-02, MEM-03 | Явные retain/recall в fixture; B/два WT общий банк, A/C изолированы | PASS 2026-10-13 |
 | M08 | TASK-03 | Async/main move/park/revive — отдельный будущий ручной прогон | не выполнено, вне этого промта |
-| M09-grant / M09-deny / M09-wg / M09-git / M09-alias | NAV-08, NAV-09 | Диалог session_move вне корней (reason+dir, выдаваемый корень), approve → grant+move, повтор без диалога, deny без гранта, workspace_grant recovery, `.git` без диалога, symlink показывает реальный корень (M09-alias добавлен 2026-10-19) | выполнено 2026-10-15: deny/git PASS; wg — грант выдан (raw `roots`), но approval-диалог не снят; grant — «повтор без диалога» не подтверждён человеком. Причина найдена и исправлена 2026-10-19, нужен повтор — [verification.md](verification.md#v18) |
-| M10 | NAV-06, NAV-10 | В TUI: `/nav-roots` после `workspace_grant` B показывает `grant: B`, а `--add-dir C` — `add-dir: C`; в `/dirs` B нет. `/add-dir D` → D в `/nav-roots`, `session_move` в D без диалога; `/remove-dir D` → снова диалог. `/nav-roots revoke B` → повторный `session_move` в B снова спрашивает. В B: revoke B отказывает «move out of it». Проект E с `.omp/config.yml` `workspace.additionalDirectories: [".."]`: после перехода в E родитель E корнем не становится | не выполнено (добавлен 2026-10-19) |
+| M09-grant / M09-deny / M09-wg / M09-git / M09-alias | NAV-08, NAV-09 | Диалог session_move вне корней (reason+dir, выдаваемый корень), approve → grant+move, повтор без диалога, deny без гранта, workspace_grant recovery, `.git` без диалога, symlink показывает реальный корень (M09-alias добавлен 2026-10-19) | 2026-10-15: deny/git PASS, wg — диалог не снят, grant — повтор не подтверждён человеком; исправлено 2026-10-19 ([V18](verification.md#v18)). **PASS 2026-10-20** (L07 [живого прогона](verification.md#live-run), omp 18.12.3); дословный текст диалогов в отчёт не записан |
+| M10 | NAV-06, NAV-10 | В TUI: `/nav-roots` после `workspace_grant` B показывает `grant: B`, а `--add-dir C` — `add-dir: C`; в `/dirs` B нет. `/add-dir D` → D в `/nav-roots`, `session_move` в D без диалога; `/remove-dir D` → снова диалог. `/nav-roots revoke B` → повторный `session_move` в B снова спрашивает. В B: revoke B отказывает «move out of it». Проект E с `.omp/config.yml` `workspace.additionalDirectories: [".."]`: после перехода в E родитель E корнем не становится | **PASS 2026-10-20** (L01, L08, L09 [живого прогона](verification.md#live-run); `--add-dir` при запуске заменён на `/add-dir`) |
+| L01–L11 | NAV-01–06, NAV-08–10, WT-01–06, TASK-01/02, MEM-01 | [Живой прогон 0.3.0](#live-prompt): всё выше плюс MCP-warning при переезде и перенос корней при `/fork` | **PASS 2026-10-20**, 11/11 ([verification.md](verification.md#live-run)) |
 
 Сценарий использует два worktree, чтобы завершившие task дети не блокировали очистку: `nav-probes` проверяет их target/память и защиту занятого каталога, `nav-cleanup` не получает детей и проверяет чистое удаление. Автоматические результаты не означают, что этот промт уже пройден.
 2026-10-13 прежний отдельный shell/Python-блок подготовки был выполнен в `/private/tmp/omp-nav-manual.a2fm0w2m`; проверены три Git-проекта и их baseline. Это исторический результат прежней инструкции с внешней подготовкой; его результаты не переносятся на новый промт, выполненный отдельно 2026-10-13 (см. [verification.md](verification.md#manual-model)).
