@@ -166,6 +166,17 @@ Print, TUI и RPC запускаются обычным установленны
 2026-10-19 (EXT-16): хост, чья версия отличается от omp в PATH, отклоняется сообщением «differs from the running omp» — [runtime.test.ts](../test/runtime.test.ts).
 2026-10-19 (EXT-01/EXT-14): каждый specifier `hostedModules` присутствует в реестре модулей `dist/cli.js` установленного omp — [runtime.test.ts](../test/runtime.test.ts); разовая сверка: 24/24 на 18.11.0 и 18.12.2.
 
+<a id="compiled-host-check"></a>2026-10-30, скомпилированный omp 18.13.3 ([механика](mechanics.md#compiled-host)):
+- Проба на бинарнике: все 27 `hostedModules` резолвятся через shim, если импортирующий модуль лежит в графе расширения. Абсолютный импорт из стороннего файла shim не переписывает — ограничение пробы, не поставки. `mnemopi/*` в реестре нет (0 из 2023 ключей). `Bun.main` равен `/$bunfs/root/omp-darwin-arm64`, у package-form — путь к `dist/cli.js`.
+- До исправления подмена `BUN_INSTALL` воспроизвела оба отказа загрузки на бинарнике: без npm-пакета («not inside the npm … package») и с пакетом 18.13.2 рядом с бинарником 18.13.3 («differs from the running omp»).
+- После исправления [runtime.test.ts](../test/runtime.test.ts) запускает PATH-бинарник при трёх `BUN_INSTALL`: реальном, пустом и с пакетом 18.11.0. Каждый раз stderr содержит `memory bridge disabled` и не содержит `Failed to load extension`. Юнит-тест `isCompiledEntry` различает `$bunfs`, `~BUN` и `dist/cli.js`.
+
+<a id="tui-binding-check"></a>2026-10-30, отложенная привязка в TUI ([механика](mechanics.md#tui-binding)):
+- Проба через pty: два запуска TUI в одном agent dir. На первом обёртка `InteractiveMode.init` срабатывает, на втором фабрика грузится и `session_start` приходит, а обёртка не вызывается. В `~/.omp/agent/agent.db` пользователя для `src/index.ts` записан `deferrable: true` с текущим fingerprint.
+- Регрессия [integration-modes.test.ts](../test/integration-modes.test.ts) «every TUI launch binds the navigation bridge to its interactive owner» дважды запускает TUI с расширением и пробой. Проба читает bridge без установки, после того как первая команда дождалась отложенных расширений. До исправления тест падал (`owner: false` на втором запуске), после регистрации shortcut проходит.
+- Shortcut-обработчик проверен в [host-grants.test.ts](../test/host-grants.test.ts): тот же список, что `/nav-roots`, ошибка приходит notice, потому что хост не ждёт обработчик.
+- Существующий TUI-сценарий отложенную загрузку не ловил: каждый запуск идёт на свежем agent dir, а его фикстура сама ставит bridge.
+
 <a id="v07"></a>
 ### V07. List/enter/exit
 
@@ -332,9 +343,19 @@ Approve выполняет вызов: grantWorkspaceDirs выдаёт гран�
 Каждая версия 29–30 s, суммарно 293.11 s; метод установки во временный prefix и PATH-резолва прежний, глобальная установка не менялась. Разница expect(): версионозависимые ассерты child-контекста (18.13.1+ не инжектит AGENTS.md дополнительных корней в task-сабагентов) и рост матрицы в гейт-тесте.
 18.13.3 в package-form требует bun >= 1.4.4 (engine-гейт пакета; 18.12.4–18.13.2 — >= 1.3.14); bun обновлён 1.4.2 → 1.4.4 с согласия пользователя, весь прогон шёл под 1.4.4. Локальный полный прогон на глобальном скомпилированном бинарнике 18.13.3: **107 pass, 2 skip, 0 fail, 849 expect() calls, 13 файлов, 27.4 s** (под bun 1.4.2 — те же числа). 2 skip — memory-сценарии bundled-memory/bundled-task: дисковая библиотека Mnemopi недоступна в standalone-хосте ([problem.md](problem.md)); эти сценарии покрыты матрицей package-form выше. Деградация подтверждена live-тестом: PATH-бинарник грузит расширение, stderr содержит `omp-agent-nav: memory bridge disabled` и не содержит `Failed to load extension`. Отдельные проверки: `Bun.plugin` в standalone-хосте не вызывается для runtime-импортов; node_modules рядом с execPath/cwd и вложенный в пакет не резолвятся (проба на тривиальном `bun build --compile` бинарнике).
 
+2026-10-30 `bun bin/matrix.ts` (bun 1.4.4), после исправлений [скомпилированного хоста](#compiled-host-check) и [привязки в TUI](#tui-binding-check). Все 15 версий 18.11.0–18.13.3 PASS, 0 fail:
+- 18.11.0–18.11.2 — 109 pass, 2 skip, 979 expect() calls;
+- 18.11.3–18.12.2 — 110 pass, 1 skip, 983 expect() calls;
+- 18.12.3–18.13.0 — 110 pass, 1 skip, 984 expect() calls;
+- 18.13.1–18.13.3 — 110 pass, 1 skip, 978 expect() calls.
+
+Каждая версия заняла 31–33 s, суммарно 487 s. В package-form пропускается тест скомпилированного хоста, на 18.11.0–18.11.2 ещё и seance-тест (seance появился в 18.11.3). TUI-тест повторного запуска проходит на всех версиях. На 18.12.6+ он идёт через отложенную загрузку, раньше откладывания нет. Пакет хоста здесь находится по `Bun.main` (`dist/cli.js` временного prefix).
+Локальный полный прогон на глобальном скомпилированном бинарнике 18.13.3: **109 pass, 2 skip, 0 fail, 859 expect() calls, 13 файлов, 30.9 s**. Пропущены memory-сценарии bundled-memory/bundled-task. `bun run check` — Exit 0.
+
 ## Что не проверялось и не выполнялось
 
 - Коммерческий провайдер, пользовательские MCP/банки, производительность prompt cache, качество и нагрузка embeddings.
 - Другие версии omp, Windows/Linux и одновременное владение worktree разными процессами omp.
+- Живой прогон с моделью на скомпилированном omp 18.13.x и на omp 18.12.6+ с отложенной загрузкой расширений. L01–L11 выполнены на 18.12.3, до появления отложенной загрузки. Привязку TUI-owner на повторном запуске проверяет автотест.
 - Изменение установленного omp и публикация пакета в npm.
 - Ручные прогоны с реальной моделью выполнены 2026-10-13 (omp 18.10.3) и повторены 2026-10-15 на omp 18.11.0 (см. [manual-model](#manual-model)): S1+M01–M07 PASS, M09-deny/git PASS; M08 остаётся NOT RUN. M09 и M10 перепроверены вживую 2026-10-20 на omp 18.12.3 (см. [live-run](#live-run)). В живых прогонах не проверялись: LSP при переходах, инъекции rollback-ошибок, реальный embeddings transport и дословные тексты диалогов.

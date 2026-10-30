@@ -108,7 +108,8 @@ export interface RuntimeModules {
   host: HostNamespace;
   importLibraryModule<T>(specifier: string): Promise<T>;
   importModule<T>(specifier: string): Promise<T>;
-  packageRoot: string;
+  /** Unset in a compiled omp: its library source is not importable from disk. */
+  packageRoot: string | undefined;
 }
 
 export interface ToolApprovalDecisionLike {
@@ -160,6 +161,10 @@ export interface ExtensionApiLike {
       description: string;
       handler(args: string, ctx: ExtensionContextLike): Promise<void>;
     },
+  ): void;
+  registerShortcut(
+    shortcut: string,
+    options: { description: string; handler(ctx: ExtensionContextLike): Promise<void> },
   ): void;
   registerTool(tool: ToolDefinitionLike): void;
   typebox: { Type: unknown };

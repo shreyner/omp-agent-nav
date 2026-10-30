@@ -8,6 +8,7 @@ import {
   createRuntime,
   findInstalledOmp,
   hostedModules,
+  isCompiledEntry,
   pathOmpIsCompiledBinary,
   SUPPORTED_OMP_VERSIONS,
 } from "../src/runtime";
@@ -278,9 +279,7 @@ export default async function(pi) {
   const host = (await Bun.file(join(findInstalledOmp(), "package.json")).json()) as {
     version: string;
   };
-  const [hostMajor, hostMinor, hostPatch] = host.version.split(".").map(Number);
-  const childGetsRootAgents =
-    hostMajor === 18 && (hostMinor < 13 || (hostMinor === 13 && hostPatch < 1));
+  const childGetsRootAgents = Bun.semver.order(host.version, "18.13.1") < 0;
   expect(JSON.stringify(result.childContexts[0])).toContain(
     childGetsRootAgents ? "PROJECT_B_UNIQUE" : "SYSTEM_B_UNIQUE",
   );
@@ -433,8 +432,16 @@ export default async function(pi) {
   );
 }, 30_000);
 
+test("compiled entries are told apart from package-form omp", () => {
+  expect(isCompiledEntry("/$bunfs/root/omp-darwin-arm64")).toBe(true);
+  expect(isCompiledEntry("B:/~BUN/root/omp.exe")).toBe(true);
+  expect(isCompiledEntry("/usr/lib/node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js")).toBe(
+    false,
+  );
+});
+
 test.skipIf(!pathOmpIsCompiledBinary())(
-  "compiled binary host loads the navigation extension without the memory bridge",
+  "compiled binary host loads the navigation extension without the memory bridge or an npm package",
   async () => {
     const directory = await fs.realpath(await fs.mkdtemp(join(tmpdir(), "omp-nav-binary-")));
     temporary.push(directory);
@@ -451,24 +458,39 @@ test.skipIf(!pathOmpIsCompiledBinary())(
       await fs.mkdir(join(target, "omp"), { recursive: true });
       env[key] = target;
     }
-    const child = Bun.spawn(
-      [
-        Bun.which("omp")!,
-        "-e",
-        join(import.meta.dir, "..", "src", "index.ts"),
-        "-p",
-        "--model",
-        "nav-absent/fixture",
-        "--api-key",
-        "test-unused",
-        "hi",
-      ],
-      { cwd: directory, env, stdout: "pipe", stderr: "pipe" },
+    // The global bun package beside the binary may be missing or another version after an update.
+    const stale = join(directory, "stale-bun");
+    const stalePackage = join(stale, "install", "global", "node_modules", "@oh-my-pi");
+    await fs.mkdir(join(stalePackage, "pi-coding-agent"), { recursive: true });
+    await fs.writeFile(
+      join(stalePackage, "pi-coding-agent", "package.json"),
+      JSON.stringify({ name: "@oh-my-pi/pi-coding-agent", version: "18.11.0" }),
     );
-    const stderr = await new Response(child.stderr).text();
-    await child.exited;
-    expect(stderr).toContain("omp-agent-nav: memory bridge disabled");
-    expect(stderr).not.toContain("Failed to load extension");
+    for (const bunInstall of [process.env.BUN_INSTALL, join(directory, "empty-bun"), stale]) {
+      const child = Bun.spawn(
+        [
+          Bun.which("omp")!,
+          "-e",
+          join(import.meta.dir, "..", "src", "index.ts"),
+          "-p",
+          "--model",
+          "nav-absent/fixture",
+          "--api-key",
+          "test-unused",
+          "hi",
+        ],
+        {
+          cwd: directory,
+          env: { ...env, BUN_INSTALL: bunInstall },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      const stderr = await new Response(child.stderr).text();
+      await child.exited;
+      expect(stderr).toContain("omp-agent-nav: memory bridge disabled");
+      expect(stderr).not.toContain("Failed to load extension");
+    }
   },
-  30_000,
+  60_000,
 );

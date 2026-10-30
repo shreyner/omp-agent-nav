@@ -23,6 +23,58 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
   return output.trim();
 }
 
+// Runs argv[1] (a JSON command line) on a 140x40 pty for at most 75 s and relays its output.
+const TUI_DRIVER = `import os,subprocess,json,pty,select,time,fcntl,termios,struct,sys
+master,slave=pty.openpty()
+fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',40,140,0,0))
+child=subprocess.Popen(json.loads(sys.argv[1]),stdin=slave,stdout=slave,stderr=slave)
+os.close(slave)
+output=bytearray()
+deadline=time.monotonic()+75
+try:
+ while child.poll() is None and time.monotonic()<deadline:
+  ready,_,_=select.select([master],[],[],0.2)
+  if ready:
+   try: chunk=os.read(master,65536)
+   except OSError: break
+   if not chunk: break
+   output.extend(chunk)
+ if child.poll() is None: child.kill()
+ child.wait()
+ while select.select([master],[],[],0)[0]:
+  try:
+   chunk=os.read(master,65536)
+   if not chunk: break
+   output.extend(chunk)
+  except OSError: break
+finally: os.close(master)
+sys.stdout.buffer.write(output)
+sys.exit(child.returncode)
+`;
+
+/** Environment of an omp run that touches no user agent dir, config, profile or XDG state. */
+async function isolatedEnv(
+  root: string,
+  agentDir: string,
+): Promise<Record<string, string | undefined>> {
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    PI_CODING_AGENT_DIR: agentDir,
+    PI_CONFIG_DIR: relative(homedir(), join(root, "configuration")),
+    TERM: "xterm-256color",
+  };
+  delete env.OMP_PROFILE;
+  delete env.PI_PROFILE;
+  delete env.PI_CONFIG_FILES;
+  delete env.OMP_AGENT_NAV_RUNTIME_ROOT;
+  for (const key of ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) {
+    const target = join(root, key.toLowerCase());
+    await fs.mkdir(join(target, "omp"), { recursive: true });
+    env[key] = target;
+  }
+  return env;
+}
+
 async function fixture(mode: "tui" | "rpc") {
   const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), `omp-nav-${mode}-`)));
   temporary.push(root);
@@ -182,26 +234,14 @@ export default async function(pi) {
 }`,
   );
   await fs.mkdir(join(root, "outside"));
-  const env: Record<string, string | undefined> = {
-    ...process.env,
-    PI_CODING_AGENT_DIR: agentDir,
-    PI_CONFIG_DIR: relative(homedir(), join(root, "configuration")),
-    TERM: "xterm-256color",
+  const env = {
+    ...(await isolatedEnv(root, agentDir)),
     GOTOOLCHAIN: "local",
     GOPROXY: "off",
     GOSUMDB: "off",
     GOCACHE: join(root, "go-cache"),
     GOPATH: join(root, "go-path"),
   };
-  delete env.OMP_PROFILE;
-  delete env.PI_PROFILE;
-  delete env.PI_CONFIG_FILES;
-  delete env.OMP_AGENT_NAV_RUNTIME_ROOT;
-  for (const key of ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) {
-    const target = join(root, key.toLowerCase());
-    await fs.mkdir(join(target, "omp"), { recursive: true });
-    env[key] = target;
-  }
   await fs.appendFile(
     config,
     `extensions:\n  - ${JSON.stringify(join(import.meta.dir, "..", "src", "index.ts"))}\n  - ${JSON.stringify(fixturePath)}\n`,
@@ -225,36 +265,7 @@ async function run(mode: "tui" | "rpc") {
   let args: string[];
   if (mode === "tui") {
     const driver = join(f.root, "tui-driver.py");
-    await fs.writeFile(
-      driver,
-      `import os,subprocess,json,pty,select,time,fcntl,termios,struct,sys
-master,slave=pty.openpty()
-fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',40,140,0,0))
-child=subprocess.Popen(json.loads(sys.argv[1]),stdin=slave,stdout=slave,stderr=slave)
-os.close(slave)
-output=bytearray()
-deadline=time.monotonic()+75
-try:
- while child.poll() is None and time.monotonic()<deadline:
-  ready,_,_=select.select([master],[],[],0.2)
-  if ready:
-   try: chunk=os.read(master,65536)
-   except OSError: break
-   if not chunk: break
-   output.extend(chunk)
- if child.poll() is None: child.kill()
- child.wait()
- while select.select([master],[],[],0)[0]:
-  try:
-   chunk=os.read(master,65536)
-   if not chunk: break
-   output.extend(chunk)
-  except OSError: break
-finally: os.close(master)
-sys.stdout.buffer.write(output)
-sys.exit(child.returncode)
-`,
-    );
+    await fs.writeFile(driver, TUI_DRIVER);
     args = ["python3", driver, JSON.stringify([...f.args, "/integration-run"])];
   } else {
     args = [...f.args, "--mode", "rpc"];
@@ -382,3 +393,56 @@ test("ordinary omp TUI moves A/B/A, runs gopls against the worktree branch and s
 test("ordinary omp RPC exposes the same navigation contract, context and worktree lifecycle", async () => {
   await run("rpc");
 }, 90_000);
+
+// 18.12.6+ binds an extension after the first frame once a launch recorded that it registers
+// nothing the frame needs; the bridge must still own the TUI on every later launch.
+test("every TUI launch binds the navigation bridge to its interactive owner", async () => {
+  const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), "omp-nav-tui-launch-")));
+  temporary.push(root);
+  const project = join(root, "project");
+  const agentDir = join(root, "agent");
+  const report = join(root, "owners.jsonl");
+  const probe = join(root, "probe.ts");
+  const config = join(root, "config.yml");
+  await fs.mkdir(project);
+  await fs.mkdir(agentDir);
+  // Reads the bridge without installing it, after the first message waited for deferred binding.
+  await fs.writeFile(
+    probe,
+    `import * as fs from "node:fs";
+export default function (pi) {
+  pi.registerCommand("nav-owner-probe", { description: "Report the bridge owner", handler: async (_args, ctx) => {
+    const bridge = await pi.pi.ExtensionRunner.prototype[Symbol.for("omp-agent-nav.host-bridge")];
+    const session = pi.pi.AgentRegistry.global().get(ctx.agent.id).session;
+    fs.appendFileSync(${JSON.stringify(report)}, JSON.stringify({ owner: bridge?.owner(session) !== undefined }) + "\\n");
+    ctx.shutdown();
+  } });
+}
+`,
+  );
+  await fs.writeFile(
+    config,
+    `memory:\n  backend: off\nsetupVersion: 2\nstartup:\n  quiet: true\n  setupWizard: false\n  showSplash: false\n  checkUpdate: false\nmarketplace:\n  autoUpdate: false\nextensions:\n  - ${JSON.stringify(join(import.meta.dir, "..", "src", "index.ts"))}\n  - ${JSON.stringify(probe)}\n`,
+  );
+  const driver = join(root, "tui-driver.py");
+  await fs.writeFile(driver, TUI_DRIVER);
+  const env = await isolatedEnv(root, agentDir);
+  const command = [Bun.which("omp")!, "--config", config, "/nav-owner-probe"];
+  for (const launch of [1, 2]) {
+    const child = Bun.spawn(["python3", driver, JSON.stringify(command)], {
+      cwd: project,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [code, stdout] = await Promise.all([child.exited, new Response(child.stdout).text()]);
+    if (code) {
+      throw new Error(`TUI launch ${launch} failed (${code}): ${stdout.slice(-4000)}`);
+    }
+  }
+  const owners = (await fs.readFile(report, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(owners).toEqual([{ owner: true }, { owner: true }]);
+}, 120_000);

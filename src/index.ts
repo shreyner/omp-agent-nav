@@ -23,7 +23,7 @@ function warnMemoryDisabled(): void {
   }
   processState[MEMORY_DISABLED] = true;
   console.warn(
-    "omp-agent-nav: memory bridge disabled: the running omp is a compiled release binary and cannot load the Mnemopi library. Navigation tools stay active; run the npm-package omp to enable memory features.",
+    "omp-agent-nav: memory bridge disabled: the running omp is a compiled release binary and cannot load the Mnemopi library. Navigation stays active and omp's own memory follows session moves; a primary/worktree shared bank and task subagents' own memory in the target project need the npm-package omp.",
   );
 }
 
@@ -172,7 +172,31 @@ function commandUi(ctx: ExtensionContextLike) {
   return ctx.ui as { notify(message: string, type?: "info" | "warning" | "error"): void };
 }
 
+async function showRoots(bridge: WorkspaceBridge, ctx: ExtensionContextLike): Promise<void> {
+  const roots = await bridge.listRoots(ctx);
+  commandUi(ctx).notify(
+    roots
+      .map(({ root, source, missing }) => `${source}: ${root}${missing ? " (missing)" : ""}`)
+      .join("\n"),
+    "info",
+  );
+}
+
+export const NAV_ROOTS_SHORTCUT = "ctrl+alt+n";
+
 export function registerCommands(pi: ExtensionApiLike, bridge: WorkspaceBridge): void {
+  // omp 18.12.6+ binds an extension after the first TUI frame once a launch recorded that it
+  // registers nothing the frame needs, which would skip the InteractiveMode.init capture of the
+  // TUI owner. A shortcut is bound at editor setup, so it keeps this extension before the frame.
+  pi.registerShortcut(NAV_ROOTS_SHORTCUT, {
+    description: "Show workspace navigation roots",
+    handler: async (ctx) => {
+      // The host does not await shortcut handlers: report failures here.
+      await showRoots(bridge, ctx).catch((error) =>
+        commandUi(ctx).notify(error instanceof Error ? error.message : String(error), "error"),
+      );
+    },
+  });
   pi.registerCommand("nav-move", {
     description: "Move this idle main session into an allowed project directory.",
     handler: async (args, ctx) => {
@@ -197,13 +221,7 @@ export function registerCommands(pi: ExtensionApiLike, bridge: WorkspaceBridge):
       const ui = commandUi(ctx);
       const revoke = /^revoke\s+(.+)$/.exec(args.trim());
       if (!args.trim()) {
-        const roots = await bridge.listRoots(ctx);
-        ui.notify(
-          roots
-            .map(({ root, source, missing }) => `${source}: ${root}${missing ? " (missing)" : ""}`)
-            .join("\n"),
-          "info",
-        );
+        await showRoots(bridge, ctx);
         return;
       }
       if (!revoke) {

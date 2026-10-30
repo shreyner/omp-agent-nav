@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { WorkspaceBridge, WorkspaceGrantState } from "../src/host";
 import { canonicalDirectory } from "../src/host/grants";
-import { registerCommands } from "../src/index";
+import { NAV_ROOTS_SHORTCUT, registerCommands } from "../src/index";
 import { NavigationError } from "../src/navigation";
 import { createRuntime, findInstalledOmp } from "../src/runtime";
 import {
@@ -622,9 +622,14 @@ test("/nav-roots and /nav-move commands: idle gate, usage, listing, revoke and a
       handler(args: string, ctx: ExtensionContextLike): Promise<void>;
     }
     const commands = new Map<string, Command>();
+    const shortcuts = new Map<string, { handler(ctx: ExtensionContextLike): Promise<void> }>();
     registerCommands(
       {
         registerCommand: (name: string, command: Command) => commands.set(name, command),
+        registerShortcut: (
+          key: string,
+          shortcut: { handler(ctx: ExtensionContextLike): Promise<void> },
+        ) => shortcuts.set(key, shortcut),
       } as unknown as ExtensionApiLike,
       f.bridge,
     );
@@ -639,6 +644,12 @@ test("/nav-roots and /nav-move commands: idle gate, usage, listing, revoke and a
     await f.bridge.grantWorkspaceDirs(f.ctx, [f.b]);
     await run("nav-roots", "");
     expect(notices.pop()).toBe(`start: ${f.a}\ngrant: ${f.b}`);
+    // The shortcut keeps the extension bound before the first TUI frame and shows the same list.
+    await shortcuts.get(NAV_ROOTS_SHORTCUT)!.handler(ctx);
+    expect(notices.pop()).toBe(`start: ${f.a}\ngrant: ${f.b}`);
+    await shortcuts.get(NAV_ROOTS_SHORTCUT)!.handler({ ...ctx, agent: { id: "gone" } } as never);
+    // The host does not await shortcut handlers, so a failure must arrive as a notice.
+    expect(notices.pop()).toBe("Only the main session may navigate projects or worktrees.");
     await expect(run("nav-roots", "drop B")).rejects.toThrow("Usage");
     idle = false;
     await expect(run("nav-roots", `revoke ${f.b}`)).rejects.toThrow(

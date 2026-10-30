@@ -71,6 +71,6 @@ V1 учитывает сабагентов текущего процесса и 
 
 **Назначение:** отказаться от library-копии Mnemopi в [memory.ts](../src/memory.ts) вместе с поиском native slot, Proxy на `valueCache` и перенаправлением backend. Вместо этого вызывать штатный bundled `start` с `settings.cloneForCwd(bank).overlay(...)` и `taskDepth: 0` для сабагентов.
 **Зависимости:** проверить, что MEM-01..03 сохраняются. Отдельно нужно решить с общим embedding client: штатный dispose любой сессии вызывает `shutdownMnemopiEmbedClient`.
-**Условие возврата:** матрица на новой версии omp падает на памяти (переименование symbol state, переход state на WeakMap, изменение `Derived`).
+**Условие возврата:** матрица на новой версии omp падает на памяти (переименование symbol state, переход state на WeakMap, изменение `Derived`), либо нужен MEM-01..03 на скомпилированном omp. Там library-копия невозможна ([граница](behavior.md#memory-binary)). Shim бинарника 18.13.3 отдаёт `resolveMemoryBackend`, `AgentSession.getMnemopiSessionState` и `rebindMemoryBackendForCwd`. `computeMnemopiBankScope`, `getMnemopiScopedDbPaths` и `mnemopiEmbedClient` он не отдаёт (2026-10-30).
 **Готовность:** без `importLibraryModule("mnemopi/*")`; `memory.test.ts`, `bundled-memory.test.ts` и `embedding-lifetime.test.ts` зелёные на всей матрице.
 Решение пользователя 2026-10-19: пока оставить текущую реализацию.

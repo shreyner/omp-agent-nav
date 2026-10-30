@@ -83,8 +83,8 @@ function locateInstalledOmp(executable: string | null): string {
   if (walked) {
     return walked;
   }
-  // Since 18.13 the omp on PATH can be a compiled release binary outside any package tree;
-  // its module library is still loaded from the companion npm package in a global root.
+  // Since 18.13 the omp on PATH can be a compiled release binary outside any package tree; the
+  // npm package beside it (source tests, an SDK host) is then found in a global root.
   const globalRoot = globalPackageRoots().find((root) => isAgentPackage(root));
   if (globalRoot) {
     return globalRoot;
@@ -181,11 +181,7 @@ export const hostedModules: Readonly<Record<string, () => Promise<unknown>>> = {
   "@oh-my-pi/pi-tui/tools/task": () => import("@oh-my-pi/pi-tui/tools/task"),
 };
 
-/**
- * Mnemopi is imported as a library from the omp on PATH; it must be the
- * running omp, not another installation (bunx, a second global install) that happens to be first.
- */
-function hostPackageRoot(host: HostNamespace): string {
+function assertHostVersion(host: HostNamespace): string {
   const hostVersion = String(host.VERSION);
   const hostStatus = versionStatus(hostVersion);
   if (hostStatus === "rejected") {
@@ -196,7 +192,19 @@ function hostPackageRoot(host: HostNamespace): string {
   if (hostStatus === "unverified") {
     warnUnverifiedHost(hostVersion);
   }
-  const packageRoot = locateInstalledOmp(Bun.which("omp"));
+  return hostVersion;
+}
+
+/**
+ * Mnemopi is imported as a library from the running omp's own package, the one Bun.main runs.
+ * An SDK host whose entry is outside that package falls back to the omp on PATH, which must then
+ * be the running version, not another installation (bunx, a second global install).
+ */
+function hostPackageRoot(host: HostNamespace): string {
+  const hostVersion = assertHostVersion(host);
+  const packageRoot =
+    (existsSync(Bun.main) ? packageRootFromExecutable(Bun.main) : null) ??
+    locateInstalledOmp(Bun.which("omp"));
   const installed = readPackage(packageRoot).version;
   if (installed !== hostVersion) {
     throw new Error(
@@ -213,32 +221,27 @@ function hostPackageRoot(host: HostNamespace): string {
  */
 export class LibraryUnavailableError extends Error {}
 
-export function runningCompiledBinary(): boolean {
-  const executable = Bun.which("omp");
-  if (!executable) {
-    return false;
-  }
-  return safeRealpath(executable) === safeRealpath(process.execPath);
-}
-
-function safeRealpath(path: string): string | null {
-  try {
-    return realpathSync(path);
-  } catch {
-    return null;
-  }
+/** A compiled omp runs from Bun's embedded filesystem; omp's own isCompiledBinary checks the same. */
+export function isCompiledEntry(main: string = Bun.main): boolean {
+  return /\$bunfs|~BUN|%7EBUN/.test(main);
 }
 
 export function createRuntime(host: HostNamespace, sourceTestRoot?: string): RuntimeModules {
-  const packageRoot = sourceTestRoot ?? hostPackageRoot(host);
-  assertInstalledOmp(packageRoot);
-  const binaryHost = !sourceTestRoot && runningCompiledBinary();
-  const libraryImport = async <T>(specifier: string): Promise<T> => {
+  // A compiled host never imports library source, so it needs no package on disk.
+  const compiled = !sourceTestRoot && isCompiledEntry();
+  if (compiled) {
+    assertHostVersion(host);
+  }
+  const packageRoot = sourceTestRoot ?? (compiled ? undefined : hostPackageRoot(host));
+  if (packageRoot) {
+    assertInstalledOmp(packageRoot);
+  }
+  const libraryImport = async <T>(root: string, specifier: string): Promise<T> => {
     const target = specifier.startsWith("@")
-      ? Bun.resolveSync(specifier, packageRoot)
+      ? Bun.resolveSync(specifier, root)
       : isAbsolute(specifier)
         ? specifier
-        : join(packageRoot, "src", specifier);
+        : join(root, "src", specifier);
     return (await import(pathToFileURL(target).href)) as T;
   };
   return {
@@ -246,7 +249,7 @@ export function createRuntime(host: HostNamespace, sourceTestRoot?: string): Run
     host,
     async importModule<T>(specifier: string): Promise<T> {
       if (sourceTestRoot) {
-        return await libraryImport<T>(specifier);
+        return await libraryImport<T>(sourceTestRoot, specifier);
       }
       // /sdk is a catch-all fallback into source; the root host exposes the actual SDK.
       if (specifier === "sdk.ts") {
@@ -272,12 +275,12 @@ export function createRuntime(host: HostNamespace, sourceTestRoot?: string): Run
       ) {
         throw new Error(`Unsupported extension-owned omp library: ${specifier}.`);
       }
-      if (binaryHost) {
+      if (!packageRoot) {
         throw new LibraryUnavailableError(
           "omp-agent-nav library modules are unavailable: the running omp is a compiled release binary, which cannot import the package's Mnemopi source with its dependencies.",
         );
       }
-      return await libraryImport<T>(specifier);
+      return await libraryImport<T>(packageRoot, specifier);
     },
   };
 }

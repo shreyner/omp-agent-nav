@@ -30,9 +30,7 @@ const hostPackage = (await Bun.file(join(findInstalledOmp(), "package.json")).js
 };
 // omp 18.13.1+ stops injecting AGENTS.md from additional workspace roots into task subagents
 // (upstream change); destination agent instructions keep proving the child scope instead.
-const [hostMajor, hostMinor, hostPatch] = hostPackage.version.split(".").map(Number);
-const childGetsRootAgents =
-  hostMajor === 18 && (hostMinor < 13 || (hostMinor === 13 && hostPatch < 1));
+const childGetsRootAgents = Bun.semver.order(hostPackage.version, "18.13.1") < 0;
 const registryModule = await runtime.importModule<HostNamespace>("registry/agent-registry.ts");
 runtime.host.AgentRegistry = registryModule.AgentRegistry;
 const memory = await installMemoryBridge(runtime);
@@ -89,7 +87,7 @@ const dirs = await runtime.importModule<{
   setProjectDir(dir: string): void;
 }>("@oh-my-pi/pi-utils");
 // The seance agent exists since omp 18.11.3; older matrix hosts skip its test.
-const hasSeance = await Bun.file(join(runtime.packageRoot, "src", "task", "seance.ts")).exists();
+const hasSeance = await Bun.file(join(runtime.packageRoot!, "src", "task", "seance.ts")).exists();
 const originalAgentDir = dirs.getAgentDir();
 const originalCwd = process.cwd();
 registerMockApi();

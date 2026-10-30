@@ -10,9 +10,7 @@ const hostPackage = (await Bun.file(join(findInstalledOmp(), "package.json")).js
 };
 // omp 18.13.1+ stops injecting AGENTS.md from additional workspace roots into task subagents
 // (upstream change); the destination agent instructions keep proving the child scope instead.
-const [hostMajor, hostMinor, hostPatch] = hostPackage.version.split(".").map(Number);
-const childGetsRootAgents =
-  hostMajor === 18 && (hostMinor < 13 || (hostMinor === 13 && hostPatch < 1));
+const childGetsRootAgents = Bun.semver.order(hostPackage.version, "18.13.1") < 0;
 async function git(cwd: string, ...args: string[]) {
   const child = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
   const [code, output, error] = await Promise.all([
