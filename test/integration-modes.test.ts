@@ -81,7 +81,7 @@ async function fixture(mode: "tui" | "rpc") {
     `import * as fs from "node:fs/promises";
 import * as fsSync from "node:fs";
 import { createMockModel } from "@oh-my-pi/pi-ai/providers/mock";
-import { registerCustomApi } from "@oh-my-pi/pi-ai/api-registry";
+import { registerCustomApi } from "@oh-my-pi/pi-ai";
 import { getActiveClients, getActiveOrPendingClient } from "@oh-my-pi/pi-coding-agent/lsp/client";
 import { getConfig } from "@oh-my-pi/pi-coding-agent/lsp/config";
 export default async function(pi) {
@@ -95,6 +95,11 @@ export default async function(pi) {
   const snapshot = async (context) => { const cwd = session.sessionManager.getCwd(); const client = await getActiveOrPendingClient(getConfig(cwd).servers.gopls, cwd); return { id: session.sessionManager.getSessionId(), cwd, file: session.sessionManager.getSessionFile(), prompt: context?.systemPrompt ?? session.agent.state.systemPrompt, skills: session.skills.map(skill => skill.name), commands: session.slashCommands.map(command => command.name), timeout: await readSetting(runtime, session.settings, "tools.maxTimeout"), clients: getActiveClients(), goplsCwd: client?.cwd }; };
   const mock = createMockModel({ id: "fixture", provider: "integration-fixture", handler: async context => {
     if (startupError) throw new Error(String(startupError));
+    if (context.systemPrompt === undefined) {
+      // 18.13+ compresses skill descriptions through the default model; background calls carry
+      // no system prompt and must stay out of the recorded call ledger.
+      return { content: ["routing hint"] };
+    }
     session = pi.pi.AgentRegistry.global().list().find(ref => ref.kind === "main" && ref.session).session;
     fsSync.appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify({ context, snapshot: await snapshot(context) }) + "\\n");
     if (calls().length > 40) throw new Error("Unexpected extra model calls");

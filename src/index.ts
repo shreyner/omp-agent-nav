@@ -1,6 +1,6 @@
 import { installHostBridge, NAVIGATION_TOOLS, type WorkspaceBridge } from "./host";
-import { installMemoryBridge } from "./memory";
-import { createRuntime } from "./runtime";
+import { installMemoryBridge, type MemoryBridge } from "./memory";
+import { createRuntime, LibraryUnavailableError } from "./runtime";
 import { installTaskTool } from "./task";
 import { type ExtensionApiLike, type ExtensionContextLike, type WorkspaceRequest } from "./types";
 
@@ -14,11 +14,32 @@ interface SchemaBuilder {
   String(options?: { description?: string; minLength?: number }): unknown;
 }
 
+const MEMORY_DISABLED = Symbol.for("omp-agent-nav.memory-disabled-warned");
+const processState = globalThis as { [MEMORY_DISABLED]?: boolean };
+
+function warnMemoryDisabled(): void {
+  if (processState[MEMORY_DISABLED]) {
+    return;
+  }
+  processState[MEMORY_DISABLED] = true;
+  console.warn(
+    "omp-agent-nav: memory bridge disabled: the running omp is a compiled release binary and cannot load the Mnemopi library. Navigation tools stay active; run the npm-package omp to enable memory features.",
+  );
+}
+
 export default async function navigationExtension(pi: ExtensionApiLike): Promise<void> {
   const runtime = createRuntime(pi.pi);
   const bridge = await installHostBridge(runtime);
-  const memory = await installMemoryBridge(runtime);
-  bridge.setMemoryBridge(memory);
+  let memory: MemoryBridge | undefined;
+  try {
+    memory = await installMemoryBridge(runtime);
+    bridge.setMemoryBridge(memory);
+  } catch (error) {
+    if (!(error instanceof LibraryUnavailableError)) {
+      throw error;
+    }
+    warnMemoryDisabled();
+  }
   await installTaskTool(pi, runtime, bridge);
   const Type = pi.typebox.Type as SchemaBuilder;
   const path = (description: string) => Type.String({ description, minLength: 1 });
@@ -105,7 +126,7 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
   pi.on("session_start", async (_event, ctx) => {
     if (ctx.agent.kind === "main") {
       await bridge.settleGrants(ctx);
-      await memory.ensure(bridge.currentSession(ctx));
+      await memory?.ensure(bridge.currentSession(ctx));
     } else {
       const api = pi as ExtensionApiLike & {
         getActiveTools(): string[];
@@ -126,7 +147,7 @@ export default async function navigationExtension(pi: ExtensionApiLike): Promise
   pi.on("session_switch", async (event, ctx) => {
     if (ctx.agent.kind === "main") {
       await bridge.settleGrants(ctx, event.reason as "new" | "resume" | "fork");
-      await memory.ensure(bridge.currentSession(ctx));
+      await memory?.ensure(bridge.currentSession(ctx));
       await bridge.notifyAfterRelocation(bridge.currentSession(ctx));
     }
   });

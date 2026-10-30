@@ -8,6 +8,7 @@ import {
   createRuntime,
   findInstalledOmp,
   hostedModules,
+  pathOmpIsCompiledBinary,
   SUPPORTED_OMP_VERSIONS,
 } from "../src/runtime";
 import { type HostNamespace } from "../src/types";
@@ -150,7 +151,7 @@ test("ordinary CLI loads the configured extension and relocates native headless 
     `import * as fs from "node:fs/promises";
 import * as fsSync from "node:fs";
 import { createMockModel } from "@oh-my-pi/pi-ai/providers/mock";
-import { registerCustomApi } from "@oh-my-pi/pi-ai/api-registry";
+import { registerCustomApi } from "@oh-my-pi/pi-ai";
 export default async function(pi) {
   const { createRuntime } = await import(${JSON.stringify(join(import.meta.dir, "..", "src", "runtime.ts"))});
   const { installHostBridge } = await import(${JSON.stringify(join(import.meta.dir, "..", "src", "host.ts"))});
@@ -160,6 +161,11 @@ export default async function(pi) {
   const lastCall = () => mainCalls().at(-1);
   const mock = createMockModel({ id: "fixture", provider: "nav-fixture", handler: context => {
     void fs.writeFile(${JSON.stringify(used)}, "called");
+    if (context.systemPrompt === undefined) {
+      // 18.13+ compresses skill descriptions through the default model; those background calls
+      // carry no system prompt and must stay out of the session-call accounting.
+      return { content: ["routing hint"] };
+    }
     fsSync.appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify(context) + "\\n");
     if (JSON.stringify(context.systemPrompt).includes("SCOPE_CHILD_B_UNIQUE")) return { content: ["child completed"] };
     if (mainCalls().length === 1) return { content: [{ type: "toolCall", name: "session_move", arguments: { dir: ${JSON.stringify(destination)}, i: "Move to the accepted destination project." } }] };
@@ -267,7 +273,17 @@ export default async function(pi) {
   expect(result.fakeCalls).toBe(4);
   expect(result.taskResult.details.results[0].exitCode).toBe(0);
   expect(result.childContexts.length).toBeGreaterThan(0);
-  expect(JSON.stringify(result.childContexts[0])).toContain("PROJECT_B_UNIQUE");
+  // 18.13.1+ stops injecting AGENTS.md from --add-dir roots into task subagents (upstream
+  // change); the destination SYSTEM.md keeps proving the child runs destination-scoped.
+  const host = (await Bun.file(join(findInstalledOmp(), "package.json")).json()) as {
+    version: string;
+  };
+  const [hostMajor, hostMinor, hostPatch] = host.version.split(".").map(Number);
+  const childGetsRootAgents =
+    hostMajor === 18 && (hostMinor < 13 || (hostMinor === 13 && hostPatch < 1));
+  expect(JSON.stringify(result.childContexts[0])).toContain(
+    childGetsRootAgents ? "PROJECT_B_UNIQUE" : "SYSTEM_B_UNIQUE",
+  );
   expect(JSON.stringify(result.childContexts[0])).not.toContain("PROJECT_A_UNIQUE");
 }, 30_000);
 
@@ -319,7 +335,7 @@ test("configured package extension creates managed and exact worktrees through h
     fixture,
     `import * as fs from "node:fs/promises";
 import { createMockModel } from "@oh-my-pi/pi-ai/providers/mock";
-import { registerCustomApi } from "@oh-my-pi/pi-ai/api-registry";
+import { registerCustomApi } from "@oh-my-pi/pi-ai";
 import * as Registry from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import * as Task from "@oh-my-pi/pi-coding-agent/task";
 import * as Capability from "@oh-my-pi/pi-coding-agent/capability";
@@ -416,3 +432,43 @@ export default async function(pi) {
     "/.claude/worktree/exact-fixture/",
   );
 }, 30_000);
+
+test.skipIf(!pathOmpIsCompiledBinary())(
+  "compiled binary host loads the navigation extension without the memory bridge",
+  async () => {
+    const directory = await fs.realpath(await fs.mkdtemp(join(tmpdir(), "omp-nav-binary-")));
+    temporary.push(directory);
+    const env: Record<string, string | undefined> = {
+      ...process.env,
+      PI_CODING_AGENT_DIR: join(directory, "agent"),
+      PI_CONFIG_DIR: relative(homedir(), join(directory, "configuration")),
+    };
+    delete env.OMP_PROFILE;
+    delete env.PI_PROFILE;
+    delete env.PI_CONFIG_FILES;
+    for (const key of ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) {
+      const target = join(directory, key.toLowerCase());
+      await fs.mkdir(join(target, "omp"), { recursive: true });
+      env[key] = target;
+    }
+    const child = Bun.spawn(
+      [
+        Bun.which("omp")!,
+        "-e",
+        join(import.meta.dir, "..", "src", "index.ts"),
+        "-p",
+        "--model",
+        "nav-absent/fixture",
+        "--api-key",
+        "test-unused",
+        "hi",
+      ],
+      { cwd: directory, env, stdout: "pipe", stderr: "pipe" },
+    );
+    const stderr = await new Response(child.stderr).text();
+    await child.exited;
+    expect(stderr).toContain("omp-agent-nav: memory bridge disabled");
+    expect(stderr).not.toContain("Failed to load extension");
+  },
+  30_000,
+);

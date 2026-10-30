@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -13,6 +14,13 @@ export const SUPPORTED_OMP_VERSIONS: readonly string[] = [
   "18.12.1",
   "18.12.2",
   "18.12.3",
+  "18.12.4",
+  "18.12.5",
+  "18.12.6",
+  "18.13.0",
+  "18.13.1",
+  "18.13.2",
+  "18.13.3",
 ];
 // Политика версий (2026-10-18): принимаем любой хост >= floor в том же major,
 // что и последняя проверенная версия; непроверенные грузятся с warning,
@@ -71,12 +79,26 @@ function locateInstalledOmp(executable: string | null): string {
   if (!executable) {
     throw new Error("omp-agent-nav requires the installed npm omp executable on PATH.");
   }
+  const walked = packageRootFromExecutable(executable);
+  if (walked) {
+    return walked;
+  }
+  // Since 18.13 the omp on PATH can be a compiled release binary outside any package tree;
+  // its module library is still loaded from the companion npm package in a global root.
+  const globalRoot = globalPackageRoots().find((root) => isAgentPackage(root));
+  if (globalRoot) {
+    return globalRoot;
+  }
+  throw new Error(
+    "The omp executable is not inside the npm @oh-my-pi/pi-coding-agent package and no global install was found. Install the supported npm package.",
+  );
+}
+
+/** Walk-up from the executable to its @oh-my-pi/pi-coding-agent package root, if any. */
+function packageRootFromExecutable(executable: string): string | null {
   let directory = dirname(realpathSync(executable));
   while (true) {
-    if (
-      existsSync(join(directory, "package.json")) &&
-      readPackage(directory).name === "@oh-my-pi/pi-coding-agent"
-    ) {
+    if (isAgentPackage(directory)) {
       return directory;
     }
     const parent = dirname(directory);
@@ -85,9 +107,30 @@ function locateInstalledOmp(executable: string | null): string {
     }
     directory = parent;
   }
-  throw new Error(
-    "The omp executable is not inside the npm @oh-my-pi/pi-coding-agent package. Install the supported npm package.",
+  return null;
+}
+
+/** True when the omp executable on PATH is a compiled release binary outside any package tree. */
+export function pathOmpIsCompiledBinary(): boolean {
+  const executable = Bun.which("omp");
+  return executable !== null && packageRootFromExecutable(executable) === null;
+}
+
+function isAgentPackage(directory: string): boolean {
+  return (
+    existsSync(join(directory, "package.json")) &&
+    readPackage(directory).name === "@oh-my-pi/pi-coding-agent"
   );
+}
+
+/** Global roots of the omp npm package, for PATH hosts that are compiled release binaries. */
+function globalPackageRoots(): string[] {
+  const agentPackage = join("node_modules", "@oh-my-pi", "pi-coding-agent");
+  return [
+    join(process.env.BUN_INSTALL ?? join(homedir(), ".bun"), "install", "global", agentPackage),
+    join("/usr/local/lib", agentPackage),
+    join("/opt/homebrew/lib", agentPackage),
+  ];
 }
 
 /** Returns the accepted package version. */
@@ -157,15 +200,39 @@ function hostPackageRoot(host: HostNamespace): string {
   const installed = readPackage(packageRoot).version;
   if (installed !== hostVersion) {
     throw new Error(
-      `omp-agent-nav loads Mnemopi from the omp on PATH (${installed ?? "unknown"} at ${packageRoot}), which differs from the running omp ${hostVersion}. Put the running installation first on PATH.`,
+      `omp-agent-nav loads Mnemopi from the omp installation at ${packageRoot} (${installed ?? "unknown"}), which differs from the running omp ${hostVersion}. Put the running installation first on PATH.`,
     );
   }
   return packageRoot;
 }
 
+/**
+ * omp release binaries are standalone Bun executables: they load runtime-imported files but do
+ * not resolve the package's node_modules dependencies for them, so the Mnemopi library source
+ * on disk cannot be imported inside a compiled host.
+ */
+export class LibraryUnavailableError extends Error {}
+
+export function runningCompiledBinary(): boolean {
+  const executable = Bun.which("omp");
+  if (!executable) {
+    return false;
+  }
+  return safeRealpath(executable) === safeRealpath(process.execPath);
+}
+
+function safeRealpath(path: string): string | null {
+  try {
+    return realpathSync(path);
+  } catch {
+    return null;
+  }
+}
+
 export function createRuntime(host: HostNamespace, sourceTestRoot?: string): RuntimeModules {
   const packageRoot = sourceTestRoot ?? hostPackageRoot(host);
   assertInstalledOmp(packageRoot);
+  const binaryHost = !sourceTestRoot && runningCompiledBinary();
   const libraryImport = async <T>(specifier: string): Promise<T> => {
     const target = specifier.startsWith("@")
       ? Bun.resolveSync(specifier, packageRoot)
@@ -204,6 +271,11 @@ export function createRuntime(host: HostNamespace, sourceTestRoot?: string): Run
         ].includes(specifier)
       ) {
         throw new Error(`Unsupported extension-owned omp library: ${specifier}.`);
+      }
+      if (binaryHost) {
+        throw new LibraryUnavailableError(
+          "omp-agent-nav library modules are unavailable: the running omp is a compiled release binary, which cannot import the package's Mnemopi source with its dependencies.",
+        );
       }
       return await libraryImport<T>(specifier);
     },

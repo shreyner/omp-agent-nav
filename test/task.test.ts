@@ -25,6 +25,14 @@ import {
 } from "../src/types";
 
 const runtime = createRuntime({} as HostNamespace, findInstalledOmp());
+const hostPackage = (await Bun.file(join(findInstalledOmp(), "package.json")).json()) as {
+  version: string;
+};
+// omp 18.13.1+ stops injecting AGENTS.md from additional workspace roots into task subagents
+// (upstream change); destination agent instructions keep proving the child scope instead.
+const [hostMajor, hostMinor, hostPatch] = hostPackage.version.split(".").map(Number);
+const childGetsRootAgents =
+  hostMajor === 18 && (hostMinor < 13 || (hostMinor === 13 && hostPatch < 1));
 const registryModule = await runtime.importModule<HostNamespace>("registry/agent-registry.ts");
 runtime.host.AgentRegistry = registryModule.AgentRegistry;
 const memory = await installMemoryBridge(runtime);
@@ -393,7 +401,9 @@ describe("native task destination scope", () => {
     expect(result.details.results[0]?.error).toBeUndefined();
     expect(result.details.results[0]?.exitCode).toBe(0);
     const prompt = JSON.stringify(f.mock.calls.at(-1)?.context.systemPrompt);
-    expect(prompt).toContain("Project B unique instructions");
+    if (childGetsRootAgents) {
+      expect(prompt).toContain("Project B unique instructions");
+    }
     expect(prompt).toContain("Destination B agent instructions");
     expect(prompt).toContain("scope-B");
     expect(prompt).toContain("Project B always rule");
@@ -440,10 +450,15 @@ describe("native task destination scope", () => {
     expect(batch.details.results.map((result) => result.index)).toEqual([0, 1]);
     expect(batch.details.results.every((result) => result.exitCode === 0)).toBe(true);
     expect(f.mock.calls.slice(-2).map((call) => JSON.stringify(call.context.systemPrompt))).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("Project A unique instructions"),
-        expect.stringContaining("Project B unique instructions"),
-      ]),
+      childGetsRootAgents
+        ? expect.arrayContaining([
+            expect.stringContaining("Project A unique instructions"),
+            expect.stringContaining("Project B unique instructions"),
+          ])
+        : expect.arrayContaining([
+            expect.stringContaining("Destination A agent instructions"),
+            expect.stringContaining("Destination B agent instructions"),
+          ]),
     );
   }, 30000);
 
@@ -497,7 +512,7 @@ describe("native task destination scope", () => {
     expect(memory.getState(revived)!.config.bank).toBe(bank);
     expect(memory.getState(revived)!.aliasOf).toBeUndefined();
     expect(JSON.stringify(f.mock.calls.at(-1)?.context.systemPrompt)).toContain(
-      "Project B unique instructions",
+      childGetsRootAgents ? "Project B unique instructions" : "Destination B agent instructions",
     );
     expect(await fs.readFile(childRef!.sessionFile!, "utf8")).toContain(
       "continue after parent move",
@@ -689,7 +704,7 @@ describe("native task destination scope", () => {
       "child finished after relocation",
     );
     expect(JSON.stringify(f.mock.calls.at(-1)?.context.systemPrompt)).toContain(
-      "Project B unique instructions",
+      childGetsRootAgents ? "Project B unique instructions" : "Destination B agent instructions",
     );
   }, 30000);
 
