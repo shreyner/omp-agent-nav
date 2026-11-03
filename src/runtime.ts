@@ -21,6 +21,11 @@ export const SUPPORTED_OMP_VERSIONS: readonly string[] = [
   "18.13.1",
   "18.13.2",
   "18.13.3",
+  "18.14.0",
+  "18.14.1",
+  "18.14.2",
+  "18.15.0",
+  "18.16.0",
 ];
 // Политика версий (2026-10-18): принимаем любой хост >= floor в том же major,
 // что и последняя проверенная версия; непроверенные грузятся с warning,
@@ -38,7 +43,7 @@ function versionRank(version: string): number | null {
   return Number(match[1]) * 1_000_000 + Number(match[2]) * 1_000 + Number(match[3]);
 }
 
-function versionStatus(version: string): "verified" | "unverified" | "rejected" {
+export function versionStatus(version: string): "verified" | "unverified" | "rejected" {
   if (SUPPORTED_OMP_VERSIONS.includes(version)) {
     return "verified";
   }

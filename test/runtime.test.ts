@@ -11,6 +11,7 @@ import {
   isCompiledEntry,
   pathOmpIsCompiledBinary,
   SUPPORTED_OMP_VERSIONS,
+  versionStatus,
 } from "../src/runtime";
 import { type HostNamespace } from "../src/types";
 
@@ -107,12 +108,18 @@ test("ordinary installed CLI passes its version smoke check", async () => {
     throw new Error(`Configured extension fixture failed: ${stderr}`);
   }
   expect(code).toBe(0);
-  // findInstalledOmp rejects hosts outside the accepted range; unverified same-major hosts pass.
+  // The gate rejects hosts below the floor and from the next major; unverified same-major hosts pass.
+  const reported = stdout.trim().split("/").pop() ?? "";
+  expect(versionStatus(reported)).not.toBe("rejected");
+  expect(stderr).toBe("");
+  if (pathOmpIsCompiledBinary()) {
+    // A compiled host needs no npm package on disk, so the global npm package may lag the binary.
+    return;
+  }
   const installed = (await Bun.file(join(findInstalledOmp(), "package.json")).json()) as {
     version: string;
   };
   expect(stdout.trim().endsWith(installed.version)).toBe(true);
-  expect(stderr).toBe("");
 });
 
 test("ordinary CLI loads the configured extension and relocates native headless state with a fake provider", async () => {
