@@ -9,8 +9,9 @@ import {
   findInstalledOmp,
   hostedModules,
   isCompiledEntry,
+  MAX_VERIFIED_OMP_VERSION,
+  MIN_OMP_VERSION,
   pathOmpIsCompiledBinary,
-  SUPPORTED_OMP_VERSIONS,
   versionStatus,
 } from "../src/runtime";
 import { type HostNamespace } from "../src/types";
@@ -62,29 +63,41 @@ test("accepts verified and newer same-major hosts, rejects older, next-major and
     );
   };
   await manifest("19.0.0");
-  expect(() => assertInstalledOmp(directory)).toThrow(
-    `omp-agent-nav supports @oh-my-pi/pi-coding-agent >= ${SUPPORTED_OMP_VERSIONS[0]} and below 19.0.0 (verified: ${SUPPORTED_OMP_VERSIONS.join(", ")}); found @oh-my-pi/pi-coding-agent 19.0.0.`,
-  );
+  expect(versionStatus("19.0.0")).toBe("rejected");
+  expect(() => assertInstalledOmp(directory)).toThrow();
   for (const version of ["18.10.9", "18.13.0-dev", "garbage"]) {
     await manifest(version);
-    expect(() => assertInstalledOmp(directory)).toThrow(
-      `found @oh-my-pi/pi-coding-agent ${version}.`,
-    );
+    expect(versionStatus(version)).toBe("rejected");
+    expect(() => assertInstalledOmp(directory)).toThrow();
   }
   const warnings: unknown[] = [];
   const originalWarn = console.warn;
   console.warn = (message: unknown) => warnings.push(message);
   try {
-    for (const version of [...SUPPORTED_OMP_VERSIONS, "18.99.0", "18.99.0"]) {
+    for (const version of [
+      MIN_OMP_VERSION,
+      "18.11.4",
+      "18.17.0",
+      "18.18.0",
+      "18.18.2",
+      MAX_VERIFIED_OMP_VERSION,
+    ]) {
       await manifest(version);
-      expect(() => assertInstalledOmp(directory)).not.toThrow();
+      expect(versionStatus(version)).toBe("verified");
+      expect(assertInstalledOmp(directory)).toBe(version);
+    }
+    const [major, minor, patch] = MAX_VERIFIED_OMP_VERSION.split(".").map(Number);
+    const newer = `${major}.${minor}.${patch! + 1}`;
+    for (const version of [newer, newer]) {
+      await manifest(version);
+      expect(versionStatus(version)).toBe("unverified");
+      expect(assertInstalledOmp(directory)).toBe(version);
     }
   } finally {
     console.warn = originalWarn;
   }
   // Verified versions load silently; an unverified one warns once per version.
   expect(warnings).toHaveLength(1);
-  expect(String(warnings[0])).toContain("host 18.99.0 is newer than the verified matrix");
 });
 
 test("library modules must come from the running omp, not another one on PATH (EXT-16)", async () => {

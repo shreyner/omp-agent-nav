@@ -5,34 +5,12 @@ import { pathToFileURL } from "node:url";
 
 import { type HostNamespace, type RuntimeModules } from "./types";
 
-export const SUPPORTED_OMP_VERSIONS: readonly string[] = [
-  "18.11.0",
-  "18.11.1",
-  "18.11.2",
-  "18.11.3",
-  "18.12.0",
-  "18.12.1",
-  "18.12.2",
-  "18.12.3",
-  "18.12.4",
-  "18.12.5",
-  "18.12.6",
-  "18.13.0",
-  "18.13.1",
-  "18.13.2",
-  "18.13.3",
-  "18.14.0",
-  "18.14.1",
-  "18.14.2",
-  "18.15.0",
-  "18.16.0",
-];
-// Политика версий (2026-10-18): принимаем любой хост >= floor в том же major,
-// что и последняя проверенная версия; непроверенные грузятся с warning,
-// ниже floor / следующий major / не-semver — отказ.
+export const MIN_OMP_VERSION = "18.11.0";
+export const MAX_VERIFIED_OMP_VERSION = "18.18.3";
+// Весь диапазон до последней проверенной версии считается проверенным (2026-11-09).
+// Более новые версии того же major грузятся с warning; ниже floor / следующий major — отказ.
 const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/;
-const MIN_VERSION = SUPPORTED_OMP_VERSIONS[0] ?? "";
-const NEXT_MAJOR = Number(SUPPORTED_OMP_VERSIONS.at(-1)?.split(".")[0]) + 1;
+const NEXT_MAJOR = Number(MAX_VERIFIED_OMP_VERSION.split(".")[0]) + 1;
 const NEXT_MAJOR_VERSION = `${NEXT_MAJOR}.0.0`;
 
 function versionRank(version: string): number | null {
@@ -42,17 +20,15 @@ function versionRank(version: string): number | null {
   }
   return Number(match[1]) * 1_000_000 + Number(match[2]) * 1_000 + Number(match[3]);
 }
+const MIN_VERSION_RANK = versionRank(MIN_OMP_VERSION)!;
+const MAX_VERIFIED_VERSION_RANK = versionRank(MAX_VERIFIED_OMP_VERSION)!;
 
 export function versionStatus(version: string): "verified" | "unverified" | "rejected" {
-  if (SUPPORTED_OMP_VERSIONS.includes(version)) {
-    return "verified";
-  }
   const rank = versionRank(version);
-  const floor = versionRank(MIN_VERSION);
-  if (rank === null || floor === null || rank < floor || rank >= NEXT_MAJOR * 1_000_000) {
+  if (rank === null || rank < MIN_VERSION_RANK || rank >= NEXT_MAJOR * 1_000_000) {
     return "rejected";
   }
-  return "unverified";
+  return rank <= MAX_VERIFIED_VERSION_RANK ? "verified" : "unverified";
 }
 
 // Process-wide: omp re-imports this module for every subagent session.
@@ -64,7 +40,7 @@ function warnUnverifiedHost(version: string): void {
   if (!warnedUnverifiedHosts.has(version)) {
     warnedUnverifiedHosts.add(version);
     console.warn(
-      `omp-agent-nav: host ${version} is newer than the verified matrix (${SUPPORTED_OMP_VERSIONS.join(", ")}); loading unverified.`,
+      `omp-agent-nav: host ${version} is newer than the verified range (${MIN_OMP_VERSION}–${MAX_VERIFIED_OMP_VERSION}); loading unverified.`,
     );
   }
 }
@@ -144,7 +120,7 @@ export function assertInstalledOmp(packageRoot: string): string {
   const status = versionStatus(manifest.version ?? "");
   if (manifest.name !== "@oh-my-pi/pi-coding-agent" || status === "rejected") {
     throw new Error(
-      `omp-agent-nav supports @oh-my-pi/pi-coding-agent >= ${MIN_VERSION} and below ${NEXT_MAJOR_VERSION} (verified: ${SUPPORTED_OMP_VERSIONS.join(", ")}); found ${manifest.name ?? "unknown"} ${manifest.version ?? "unknown"}.`,
+      `omp-agent-nav supports @oh-my-pi/pi-coding-agent >= ${MIN_OMP_VERSION} and below ${NEXT_MAJOR_VERSION} (verified: ${MIN_OMP_VERSION}–${MAX_VERIFIED_OMP_VERSION}); found ${manifest.name ?? "unknown"} ${manifest.version ?? "unknown"}.`,
     );
   }
   if (status === "unverified") {
@@ -191,7 +167,7 @@ function assertHostVersion(host: HostNamespace): string {
   const hostStatus = versionStatus(hostVersion);
   if (hostStatus === "rejected") {
     throw new Error(
-      `omp-agent-nav needs host version >= ${MIN_VERSION} and below ${NEXT_MAJOR_VERSION}; found ${hostVersion}.`,
+      `omp-agent-nav needs host version >= ${MIN_OMP_VERSION} and below ${NEXT_MAJOR_VERSION}; found ${hostVersion}.`,
     );
   }
   if (hostStatus === "unverified") {

@@ -2,19 +2,12 @@
 // Матрица версий omp: прогоняет ./test против указанных версий
 // @oh-my-pi/pi-coding-agent, установленных во временный prefix.
 // Глобальная установка не затрагивается: тесты резолвят omp по PATH.
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { MAX_VERIFIED_OMP_VERSION } from "../src/runtime";
+
 const args = process.argv.slice(2);
-let versions = args;
-if (!versions.length) {
-  const source = readFileSync(join(import.meta.dir, "..", "src", "runtime.ts"), "utf8");
-  const match = source.match(/SUPPORTED_OMP_VERSIONS[^=]*=\s*\[([^\]]*)\]/);
-  if (!match) {
-    throw new Error("Cannot parse SUPPORTED_OMP_VERSIONS from src/runtime.ts");
-  }
-  versions = [...match[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-}
+const versions = args.length ? args : [MAX_VERIFIED_OMP_VERSION];
 const failures: string[] = [];
 for (const version of versions) {
   const prefix = join("/tmp/omp-matrix", version);

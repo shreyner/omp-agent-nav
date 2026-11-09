@@ -7,7 +7,7 @@ import {
   resolveProjectIdentity,
   WorkspaceNavigation,
 } from "../navigation";
-import { SUPPORTED_OMP_VERSIONS } from "../runtime";
+import { MAX_VERIFIED_OMP_VERSION, MIN_OMP_VERSION } from "../runtime";
 import {
   type ExtensionContextLike,
   type HostNamespace,
@@ -131,7 +131,7 @@ export class WorkspaceBridge {
     const ref = this.runtime.host.AgentRegistry.global().get(ctx.agent.id);
     if (!ref?.session || ref.session.sessionManager !== ctx.sessionManager) {
       throw new Error(
-        `omp-agent-nav cannot match this context to the running omp session (supported: ${SUPPORTED_OMP_VERSIONS.join(", ")}).`,
+        `omp-agent-nav cannot match this context to the running omp session (verified: ${MIN_OMP_VERSION}–${MAX_VERIFIED_OMP_VERSION}).`,
       );
     }
     return ref.session;
@@ -690,7 +690,7 @@ async function createHostBridge(runtime: RuntimeModules): Promise<WorkspaceBridg
   );
   if (registry.AgentRegistry !== host.AgentRegistry) {
     throw new Error(
-      `omp-agent-nav could not bind to the running omp module registry. Use a supported npm omp version: ${SUPPORTED_OMP_VERSIONS.join(", ")}.`,
+      `omp-agent-nav could not bind to the running omp module registry. Use a verified npm omp version: ${MIN_OMP_VERSION}–${MAX_VERIFIED_OMP_VERSION}.`,
     );
   }
   const bridge = new WorkspaceBridge(runtime);

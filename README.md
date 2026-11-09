@@ -107,8 +107,9 @@ The extension hooks into omp internals: non-public modules of `@oh-my-pi/pi-codi
 prototype wrappers around session classes, and Mnemopi library modules from the installed package.
 Upgrades of omp can break it even within a major version.
 
-- Verified: omp 18.11.0 – 18.16.0 (`SUPPORTED_OMP_VERSIONS` in [src/runtime.ts](src/runtime.ts)).
-- Other 18.x versions >= 18.11.0 load with a warning; older versions, pre-release / non-semver
+- Verified range: omp 18.11.0 – 18.18.3 inclusive (`MIN_OMP_VERSION` / `MAX_VERIFIED_OMP_VERSION`
+  in [src/runtime.ts](src/runtime.ts)). Intermediate releases are considered verified by policy.
+- Newer 18.x versions load with a warning; versions below 18.11.0, pre-release / non-semver
   versions and the next major are rejected at startup.
 - The `omp` found on `PATH` must be the running installation (same version): Mnemopi is loaded
   from it. A mismatch, e.g. running another install through `bunx`, is rejected at startup.
@@ -120,7 +121,7 @@ Upgrades of omp can break it even within a major version.
 bun install        # Biome, TypeScript, Bun types; omp is an optional peer and is not installed locally
 bun run check      # tsc --noEmit + bundle with external packages + Biome gate
 bun run test       # full suite (~1 min)
-bun run matrix     # run the suite against every verified omp version (npm installs under /tmp)
+bun run matrix     # run the suite against the verified upper bound (npm install under /tmp)
 ```
 
 The test suite runs the real installed omp with a fake model provider in temporary fixtures. It
